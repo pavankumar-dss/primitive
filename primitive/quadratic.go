@@ -2,6 +2,7 @@ package primitive
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/fogleman/gg"
@@ -69,10 +70,30 @@ func (q *Quadratic) Mutate() {
 		case 3:
 			q.Width = clamp(q.Width+rnd.NormFloat64(), 1, 16)
 		}
+		q.orient()
 		if q.Valid() {
 			break
 		}
 	}
+}
+
+// orient rotates the curve about the middle of its chord so that the chord
+// follows the worker's direction constraint, if any.
+func (q *Quadratic) orient() {
+	mx, my := (q.X1+q.X3)/2, (q.Y1+q.Y3)/2
+	a, ok := q.Worker.direction(mx, my)
+	if !ok {
+		return
+	}
+	d := radians(a) - math.Atan2(q.Y3-q.Y1, q.X3-q.X1)
+	q.X1, q.Y1 = rotateAbout(q.X1, q.Y1, mx, my, d)
+	q.X2, q.Y2 = rotateAbout(q.X2, q.Y2, mx, my, d)
+	q.X3, q.Y3 = rotateAbout(q.X3, q.Y3, mx, my, d)
+}
+
+func rotateAbout(x, y, cx, cy, theta float64) (float64, float64) {
+	x, y = rotate(x-cx, y-cy, theta)
+	return x + cx, y + cy
 }
 
 func (q *Quadratic) Valid() bool {

@@ -45,6 +45,11 @@ Small input images should be used (like 256x256px). You don't need the detail an
 | `a` | 128 | color alpha (use `0` to let the algorithm choose alpha for each shape) |
 | `bg` | avg | starting background color (hex) |
 | `j` | 0 | number of parallel workers (default uses all cores) |
+| `focus` | off | point oriented shapes toward `x,y` (fractions of width and height, e.g. `0.6,0.7`) |
+| `angle` | off | point oriented shapes along this angle (degrees counterclockwise from horizontal) |
+| `minsize` | 0 | smallest shape, as a fraction of the image's longest side (`0` = no limit) |
+| `maxsize` | 0 | largest shape, as a fraction of the image's longest side (`0` = no limit) |
+| `region` | off | image whose white areas are the only places shapes may go |
 | `v` | off | verbose output |
 | `vv` | off | very verbose output |
 
@@ -75,9 +80,21 @@ Since the algorithm has a random component to it, you can run it against the sam
 
 ### Creative Constraints
 
-If you're willing to dabble in the code, you can enforce constraints on the shapes to produce even more interesting results. Here, the rectangles are constrained to point toward the sun in this picture of a pyramid sunset.
+You can enforce constraints on the shapes to produce even more interesting results. Here, the rectangles are constrained to point toward the sun in this picture of a pyramid sunset.
 
 ![Pyramids](https://www.michaelfogleman.com/static/primitive/examples/pyramids.png)
+
+The same effect is built in:
+
+    primitive -i examples/pyramids.png -o out.png -n 200 -m 5 -focus 0.625,0.713
+
+Available constraints, on the command line and on the website (under "Constraints"):
+
+- **Direction** (`-focus` or `-angle`): rotated rectangles, rotated ellipses and Bézier curves point toward a spot or along a fixed angle. Rectangles and ellipses are kept at least twice as long as they are wide, so their direction shows.
+- **Size** (`-minsize`, `-maxsize`): only small shapes for a mosaic look, or only large ones for bolder abstraction.
+- **Region** (`-region mask.png`): shapes only go where the mask is white (up to 10% of a shape may spill over); everything else stays the background color. On the website you paint the region onto the image.
+
+To invent your own, see `primitive/constraints.go`: direction is applied in each oriented shape's `Mutate()`, and the size and region rules add a penalty in `Worker.Energy`, which steers the search toward shapes that follow them.
 
 ### Shape and Iteration Comparison Matrix
 

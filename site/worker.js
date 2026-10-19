@@ -23,8 +23,9 @@ const nextTick = () => new Promise((resolve) => {
 
 async function run(id, job) {
   if (typeof primitiveInit !== 'function') return; // load failed; already reported
-  const { pixels, width, height, mode, count, alpha, repeat, outputSize, background } = job;
-  primitiveInit(new Uint8Array(pixels), width, height, outputSize, background);
+  const { pixels, width, height, mode, count, alpha, repeat, outputSize, background, constraints } = job;
+  if (constraints && constraints.region) constraints.region = new Uint8Array(constraints.region);
+  primitiveInit(new Uint8Array(pixels), width, height, outputSize, background, constraints || null);
   const start = performance.now();
   let lastPost = 0;
   let score = 0;
@@ -35,10 +36,10 @@ async function run(id, job) {
     const now = performance.now();
     if (i === count || now - lastPost > 150) {
       lastPost = now;
-      postMessage({ type: 'progress', done: i, count, score, elapsed: now - start, svg: primitiveSVG() });
+      postMessage({ type: 'progress', done: i, count, shapes: primitiveShapes(), score, elapsed: now - start, svg: primitiveSVG() });
     }
   }
-  postMessage({ type: 'done', score, elapsed: performance.now() - start });
+  postMessage({ type: 'done', score, shapes: primitiveShapes(), elapsed: performance.now() - start });
 }
 
 onmessage = async ({ data }) => {

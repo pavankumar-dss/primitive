@@ -7,6 +7,7 @@
 <meta name="description" content="Reproduce any image with geometric primitives, right in your browser.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 28 14 4l12 24z' fill='%23f2b134' fill-opacity='.85'/%3E%3Ccircle cx='21' cy='18' r='9' fill='%23ed553b' fill-opacity='.7'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
+<script src="constraints.js" defer></script>
 <script src="app.js" defer></script>
 </head>
 <body>
@@ -72,6 +73,46 @@
       <label class="check"><input type="checkbox" id="alpha-auto"> Let the algorithm pick opacity per shape</label>
     </section>
 
+    <details id="constraints">
+      <summary>Constraints <span class="badge" id="c-badge" hidden></span></summary>
+      <label class="field">
+        <span>Direction</span>
+        <select id="c-direction">
+          <option value="">Any</option>
+          <option value="focus">Point toward a spot</option>
+          <option value="angle">Fixed angle</option>
+        </select>
+      </label>
+      <p class="hint" id="c-focus-hint" hidden>Click or drag on the original image to move the spot.</p>
+      <label class="field" id="c-angle-field" hidden>
+        <span>Angle <output id="c-angle-out">45°</output></span>
+        <input type="range" id="c-angle" min="0" max="179" value="45">
+      </label>
+      <p class="hint warn" id="c-direction-warn" hidden>Direction applies to rotated rectangles, rotated ellipses
+        and Bézier curves. <button type="button" class="link" id="c-switch">Use rotated rectangles</button></p>
+      <label class="field">
+        <span>Smallest shape <output id="c-min-out">any</output></span>
+        <input type="range" id="c-min" min="0" max="50" value="0">
+      </label>
+      <label class="field">
+        <span>Largest shape <output id="c-max-out">any</output></span>
+        <input type="range" id="c-max" min="2" max="100" value="100">
+      </label>
+      <label class="check"><input type="checkbox" id="c-region"> Only paint inside a region</label>
+      <div class="region-tools" id="c-region-tools" hidden>
+        <p class="hint">Paint over the original image where shapes may go; the rest stays background.</p>
+        <label class="field">
+          <span>Brush size</span>
+          <input type="range" id="c-brush" min="2" max="25" value="8">
+        </label>
+        <div class="row">
+          <button type="button" id="c-clear">Clear</button>
+          <button type="button" id="c-invert">Invert</button>
+        </div>
+      </div>
+      <p class="hint">Sizes are a share of the image's longest side.</p>
+    </details>
+
     <details>
       <summary>Advanced</summary>
       <label class="field">
@@ -121,7 +162,14 @@
     <div class="frames">
       <figure>
         <div class="frame" id="original"><p class="placeholder">Your image will appear here</p></div>
-        <figcaption>Original</figcaption>
+        <figcaption>
+          <span>Original</span>
+          <span class="tools" id="tools" hidden>
+            <button type="button" data-tool="spot">Move spot</button>
+            <button type="button" data-tool="paint">Paint</button>
+            <button type="button" data-tool="erase">Erase</button>
+          </span>
+        </figcaption>
       </figure>
       <figure>
         <div class="frame" id="result"><p class="placeholder">…and its primitive version here</p></div>

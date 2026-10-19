@@ -16,9 +16,11 @@ import (
 
 var model *primitive.Model
 
-// primitiveInit(rgba Uint8Array, width, height, outputSize, background)
-// creates a new model. background is a hex color, or "" for the average
-// color of the image. Returns the starting score.
+// primitiveInit(rgba Uint8Array, width, height, outputSize, background,
+// constraints) creates a new model. background is a hex color, or "" for
+// the average color of the image. constraints is optional: {focus: [x, y],
+// angle, minSize, maxSize, region: Uint8Array of width*height bytes}, all
+// fields optional. Returns the starting score.
 func initModel(this js.Value, args []js.Value) any {
 	w, h := args[1].Int(), args[2].Int()
 	im := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -31,7 +33,40 @@ func initModel(this js.Value, args []js.Value) any {
 	}
 	// a single worker: goroutines don't run in parallel under js/wasm
 	model = primitive.NewModel(im, bg, args[3].Int(), 1)
+	if len(args) > 5 && args[5].Type() == js.TypeObject {
+		model.SetConstraints(parseConstraints(args[5], w, h))
+	}
 	return model.Score
+}
+
+func parseConstraints(o js.Value, w, h int) primitive.Constraints {
+	var c primitive.Constraints
+	if f := o.Get("focus"); f.Truthy() {
+		c.Focus, c.FocusX, c.FocusY = true, f.Index(0).Float(), f.Index(1).Float()
+	}
+	if a := o.Get("angle"); a.Type() == js.TypeNumber {
+		c.FixedAngle, c.Angle = true, a.Float()
+	}
+	if v := o.Get("minSize"); v.Type() == js.TypeNumber {
+		c.MinSize = v.Float()
+	}
+	if v := o.Get("maxSize"); v.Type() == js.TypeNumber {
+		c.MaxSize = v.Float()
+	}
+	if r := o.Get("region"); r.Truthy() {
+		region := image.NewGray(image.Rect(0, 0, w, h))
+		js.CopyBytesToGo(region.Pix, r)
+		c.Region = region
+	}
+	return c
+}
+
+// primitiveShapes() returns the number of shapes in the model.
+func shapes(this js.Value, args []js.Value) any {
+	if model == nil {
+		return 0
+	}
+	return len(model.Shapes)
 }
 
 // primitiveStep(mode, alpha, repeat) adds one shape (plus repeat extra
@@ -116,6 +151,7 @@ func toJS(b []byte) js.Value {
 func main() {
 	js.Global().Set("primitiveInit", js.FuncOf(initModel))
 	js.Global().Set("primitiveStep", js.FuncOf(step))
+	js.Global().Set("primitiveShapes", js.FuncOf(shapes))
 	js.Global().Set("primitiveSVG", js.FuncOf(svg))
 	js.Global().Set("primitivePNG", js.FuncOf(pngBytes))
 	js.Global().Set("primitiveAnimatedSVG", js.FuncOf(animatedSVG))

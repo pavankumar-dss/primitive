@@ -27,6 +27,12 @@ var (
 	Nth        int
 	Repeat     int
 	V, VV      bool
+
+	Focus      string
+	Angle      string
+	MinSize    float64
+	MaxSize    float64
+	RegionPath string
 )
 
 type flagArray []string
@@ -71,6 +77,11 @@ func init() {
 	flag.IntVar(&Workers, "j", 0, "number of parallel workers (default uses all cores)")
 	flag.IntVar(&Nth, "nth", 1, "save every Nth frame (put \"%d\" in path)")
 	flag.IntVar(&Repeat, "rep", 0, "add N extra shapes per iteration with reduced search")
+	flag.StringVar(&Focus, "focus", "", "point oriented shapes toward x,y (fractions of width and height, e.g. 0.5,0.2)")
+	flag.StringVar(&Angle, "angle", "", "point oriented shapes along this angle (degrees counterclockwise)")
+	flag.Float64Var(&MinSize, "minsize", 0, "smallest shape, as a fraction of the image's longest side")
+	flag.Float64Var(&MaxSize, "maxsize", 0, "largest shape, as a fraction of the image's longest side")
+	flag.StringVar(&RegionPath, "region", "", "image whose white areas are the only places shapes may go")
 	flag.BoolVar(&V, "v", false, "verbose")
 	flag.BoolVar(&VV, "vv", false, "very verbose")
 }
@@ -84,6 +95,41 @@ func check(err error) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func parseConstraints() (primitive.Constraints, error) {
+	var c primitive.Constraints
+	if Focus != "" {
+		parts := strings.Split(Focus, ",")
+		if len(parts) != 2 {
+			return c, fmt.Errorf("-focus must be x,y")
+		}
+		x, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+		y, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+		if err1 != nil || err2 != nil {
+			return c, fmt.Errorf("-focus must be two numbers, like 0.5,0.2")
+		}
+		c.Focus, c.FocusX, c.FocusY = true, x, y
+	}
+	if Angle != "" {
+		a, err := strconv.ParseFloat(Angle, 64)
+		if err != nil {
+			return c, fmt.Errorf("-angle must be a number of degrees")
+		}
+		c.FixedAngle, c.Angle = true, a
+	}
+	if MinSize < 0 || MaxSize < 0 || (MaxSize > 0 && MinSize > MaxSize) {
+		return c, fmt.Errorf("-minsize and -maxsize must be positive, with minsize <= maxsize")
+	}
+	c.MinSize, c.MaxSize = MinSize, MaxSize
+	if RegionPath != "" {
+		region, err := primitive.LoadImage(RegionPath)
+		if err != nil {
+			return c, fmt.Errorf("reading -region: %v", err)
+		}
+		c.Region = region
+	}
+	return c, nil
 }
 
 func main() {
@@ -108,6 +154,10 @@ func main() {
 		if config.Count < 1 {
 			ok = errorMessage("ERROR: number argument must be > 0")
 		}
+	}
+	constraints, err := parseConstraints()
+	if err != nil {
+		ok = errorMessage("ERROR: " + err.Error())
 	}
 	if !ok {
 		fmt.Println("Usage: primitive [OPTIONS] -i input -o output -n count")
@@ -149,6 +199,7 @@ func main() {
 
 	// run algorithm
 	model := primitive.NewModel(input, bg, OutputSize, Workers)
+	model.SetConstraints(constraints)
 	primitive.Log(1, "%d: t=%.3f, score=%.6f\n", 0, 0.0, model.Score)
 	start := time.Now()
 	frame := 0

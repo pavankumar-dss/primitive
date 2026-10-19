@@ -131,6 +131,16 @@ func (r *RotatedRectangle) Mutate() {
 	case 2:
 		r.Angle = r.Angle + int(rnd.NormFloat64()*32)
 	}
+	if a, ok := r.Worker.direction(float64(r.X), float64(r.Y)); ok {
+		// keep it elongated so that its direction is visible
+		if r.Sx >= r.Sy {
+			r.Sy = min(r.Sy, max(1, int(float64(r.Sx)/minOrientedAspect)))
+		} else {
+			r.Sx = min(r.Sx, max(1, int(float64(r.Sy)/minOrientedAspect)))
+			a += 90
+		}
+		r.Angle = int(math.Round(a))
+	}
 	// for !r.Valid() {
 	// 	r.Sx = clampInt(r.Sx+int(rnd.NormFloat64()*16), 0, w-1)
 	// 	r.Sy = clampInt(r.Sy+int(rnd.NormFloat64()*16), 0, h-1)

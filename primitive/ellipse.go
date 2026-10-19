@@ -113,7 +113,9 @@ func NewRandomRotatedEllipse(worker *Worker) *RotatedEllipse {
 	rx := rnd.Float64()*32 + 1
 	ry := rnd.Float64()*32 + 1
 	a := rnd.Float64() * 360
-	return &RotatedEllipse{worker, x, y, rx, ry, a}
+	c := &RotatedEllipse{worker, x, y, rx, ry, a}
+	c.orient()
+	return c
 }
 
 func (c *RotatedEllipse) Draw(dc *gg.Context, scale float64) {
@@ -149,6 +151,23 @@ func (c *RotatedEllipse) Mutate() {
 	case 2:
 		c.Angle = c.Angle + rnd.NormFloat64()*32
 	}
+	c.orient()
+}
+
+// orient applies the worker's direction constraint, if any, keeping the
+// ellipse elongated so that its direction is visible.
+func (c *RotatedEllipse) orient() {
+	a, ok := c.Worker.direction(c.X, c.Y)
+	if !ok {
+		return
+	}
+	if c.Rx >= c.Ry {
+		c.Ry = math.Min(c.Ry, math.Max(1, c.Rx/minOrientedAspect))
+	} else {
+		c.Rx = math.Min(c.Rx, math.Max(1, c.Ry/minOrientedAspect))
+		a += 90
+	}
+	c.Angle = a
 }
 
 func (c *RotatedEllipse) Rasterize() []Scanline {

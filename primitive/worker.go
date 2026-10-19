@@ -19,6 +19,8 @@ type Worker struct {
 	Rnd        *rand.Rand
 	Score      float64
 	Counter    int
+
+	constraints *constraints
 }
 
 func NewWorker(target *image.RGBA) *Worker {
@@ -50,7 +52,13 @@ func (worker *Worker) Energy(shape Shape, alpha int) float64 {
 	color := computeColor(worker.Target, worker.Current, lines, alpha)
 	copyLines(worker.Buffer, worker.Current, lines)
 	drawLines(worker.Buffer, color, lines)
-	return differencePartial(worker.Target, worker.Current, worker.Buffer, worker.Score, lines)
+	energy := differencePartial(worker.Target, worker.Current, worker.Buffer, worker.Score, lines)
+	if v := worker.violation(lines); v > 0 {
+		// scores are at most 1, so any allowed shape beats a disallowed
+		// one, and smaller violations still guide the search
+		energy += 1 + v
+	}
+	return energy
 }
 
 func (worker *Worker) BestHillClimbState(t ShapeType, a, n, age, m int) *State {

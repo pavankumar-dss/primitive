@@ -29,7 +29,7 @@ let engineReady = false;
 let running = false;
 let lastSvg = null;
 let lastJob = null;
-let lastDone = 0;        // steps completed in the current run
+let lastShapes = 0;      // shapes in the current result
 let exporting = null;    // format of the animation being made, if any
 
 // ---------------------------------------------------------------- worker
@@ -44,7 +44,7 @@ worker.onmessage = ({ data }) => {
       break;
     case 'progress':
       if (!running) break;
-      lastDone = data.done;
+      lastShapes = data.shapes;
       lastSvg = data.svg;
       ui.result.innerHTML = data.svg;
       fitSvg(ui.result.querySelector('svg'));
@@ -52,10 +52,14 @@ worker.onmessage = ({ data }) => {
       setStatus(`Shape ${data.done} of ${data.count} · ${fmtTime(data.elapsed)}`
         + ` · ${(data.done / data.elapsed * 1000).toFixed(1)} shapes/s`);
       break;
-    case 'done':
-      finish(`Done: ${shapeLabel(lastJob.count)} in ${fmtTime(data.elapsed)}.`);
-      ui.resultCaption.textContent = shapeLabel(lastJob.count);
+    case 'done': {
+      lastShapes = data.shapes;
+      const short = lastJob.constraints && data.shapes < lastJob.count
+        ? ' Some steps found no shape that fits the constraints.' : '';
+      finish(`Done: ${shapeLabel(data.shapes)} in ${fmtTime(data.elapsed)}.${short}`);
+      ui.resultCaption.textContent = shapeLabel(data.shapes);
       break;
+    }
     case 'png':
       if (data.bytes) download(new Blob([data.bytes], { type: 'image/png' }), '.png');
       break;
@@ -107,7 +111,7 @@ async function useBlob(blob, name) {
   canvas.width = bitmap.width;
   canvas.height = bitmap.height;
   canvas.getContext('2d').drawImage(bitmap, 0, 0);
-  ui.original.replaceChildren(canvas);
+  constraintsUI.attach(ui.original, canvas);
   ui.result.innerHTML = '<p class="placeholder">Press Generate</p>';
   ui.resultCaption.textContent = 'Primitive';
   lastSvg = null;
@@ -255,13 +259,19 @@ ui.form.addEventListener('submit', (e) => {
   const scale = Math.min(1, job.inputSize / Math.max(source.width, source.height));
   const width = Math.max(1, Math.round(source.width * scale));
   const height = Math.max(1, Math.round(source.height * scale));
+  try {
+    job.constraints = constraintsUI.read(width, height);
+  } catch (err) {
+    setStatus(err.message, true);
+    return;
+  }
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, 0, 0, width, height);
   const pixels = ctx.getImageData(0, 0, width, height).data.buffer;
   lastJob = job;
-  lastDone = 0;
+  lastShapes = 0;
   running = true;
   ui.progress.hidden = false;
   ui.progressBar.style.width = '0';
@@ -269,14 +279,16 @@ ui.form.addEventListener('submit', (e) => {
   setStatus('Starting…');
   setExportStatus('');
   updateButtons();
-  worker.postMessage({ type: 'start', pixels, width, height, ...job }, [pixels]);
+  const transfer = [pixels];
+  if (job.constraints && job.constraints.region) transfer.push(job.constraints.region);
+  worker.postMessage({ type: 'start', pixels, width, height, ...job }, transfer);
   if (matchMedia('(max-width: 860px)').matches) ui.result.scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
 
 ui.stop.addEventListener('click', () => {
   worker.postMessage({ type: 'stop' });
   finish('Stopped.');
-  if (lastDone) ui.resultCaption.textContent = shapeLabel(lastDone) + ' (stopped)';
+  if (lastShapes) ui.resultCaption.textContent = shapeLabel(lastShapes) + ' (stopped)';
 });
 
 function finish(message, isError) {
@@ -330,9 +342,8 @@ function fitSvg(svg) {
   if (svg) svg.setAttribute('viewBox', `0 0 ${svg.getAttribute('width')} ${svg.getAttribute('height')}`);
 }
 
-// Each step adds one shape plus `repeat` extra ones.
-function shapeLabel(steps) {
-  return `${steps * (1 + lastJob.repeat)} ${MODE_NAMES[lastJob.mode]}`;
+function shapeLabel(shapes) {
+  return `${shapes} ${MODE_NAMES[lastJob.mode]}`;
 }
 
 function setExportStatus(text, isError) {
