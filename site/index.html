@@ -83,7 +83,9 @@
           <option value="angle">Fixed angle</option>
         </select>
       </label>
-      <p class="hint" id="c-focus-hint" hidden>Click or drag on the original image to move the spot.</p>
+      <p class="hint" id="c-focus-hint" hidden>Click or drag on the original image to move the spot.
+        It's now <strong id="c-focus-pos">in the center</strong>.
+        <button type="button" class="link" id="c-focus-reset">Center it</button></p>
       <label class="field" id="c-angle-field" hidden>
         <span>Angle <output id="c-angle-out">45°</output></span>
         <input type="range" id="c-angle" min="0" max="179" value="45">

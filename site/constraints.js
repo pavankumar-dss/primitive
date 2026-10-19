@@ -9,6 +9,7 @@ const constraintsUI = (() => {
   const el = {
     panel: $('constraints'), badge: $('c-badge'),
     direction: $('c-direction'), focusHint: $('c-focus-hint'),
+    focusPos: $('c-focus-pos'), focusReset: $('c-focus-reset'),
     angleField: $('c-angle-field'), angle: $('c-angle'), angleOut: $('c-angle-out'),
     warn: $('c-direction-warn'), switchMode: $('c-switch'), mode: $('mode'),
     min: $('c-min'), minOut: $('c-min-out'), max: $('c-max'), maxOut: $('c-max-out'),
@@ -85,6 +86,7 @@ const constraintsUI = (() => {
     sync();
   });
   el.toolButtons.forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  el.focusReset.addEventListener('click', () => moveFocus({ x: 0.5, y: 0.5 }));
   el.clear.addEventListener('click', () => {
     if (!mask) return;
     mask.getContext('2d').clearRect(0, 0, mask.width, mask.height);
@@ -128,6 +130,8 @@ const constraintsUI = (() => {
     wrap.append(imageCanvas, overlay, marker);
     frame.replaceChildren(wrap);
 
+    // guide line widths depend on the displayed size
+    new ResizeObserver(() => draw()).observe(overlay);
     overlay.addEventListener('pointerdown', onDown);
     overlay.addEventListener('pointermove', onMove);
     overlay.addEventListener('pointerup', onUp);
@@ -150,7 +154,7 @@ const constraintsUI = (() => {
     overlay.setPointerCapture(e.pointerId);
     const p = pointFrom(e);
     if (tool === 'spot') {
-      focus = p;
+      moveFocus(p);
       painting = true; // dragging moves the spot too
     } else {
       painting = true;
@@ -164,7 +168,7 @@ const constraintsUI = (() => {
     if (!painting) return;
     const p = pointFrom(e);
     if (tool === 'spot') {
-      focus = p;
+      moveFocus(p);
     } else {
       paint(lastPoint, p);
       lastPoint = p;
@@ -175,6 +179,20 @@ const constraintsUI = (() => {
   function onUp() {
     painting = false;
     lastPoint = null;
+  }
+
+  function moveFocus(p) {
+    focus = p;
+    const pct = (v) => Math.round(v * 100) + '%';
+    const centered = Math.abs(p.x - 0.5) < 0.02 && Math.abs(p.y - 0.5) < 0.02;
+    el.focusPos.textContent = centered ? 'in the center' : `${pct(p.x)} across, ${pct(p.y)} down`;
+    if (marker) {
+      // restart the pulse animation
+      marker.classList.remove('pulse');
+      void marker.offsetWidth;
+      marker.classList.add('pulse');
+    }
+    draw();
   }
 
   function paint(a, b) {
@@ -202,10 +220,58 @@ const constraintsUI = (() => {
       ctx.drawImage(mask, 0, 0);
       ctx.globalCompositeOperation = 'source-over';
     }
-    const showSpot = el.direction.value === 'focus';
-    marker.hidden = !showSpot;
+    if (el.direction.value === 'focus') drawRays(ctx);
+    if (el.direction.value === 'angle') drawParallels(ctx);
+    marker.hidden = el.direction.value !== 'focus';
     marker.style.left = focus.x * 100 + '%';
     marker.style.top = focus.y * 100 + '%';
+  }
+
+  // Guide lines are drawn twice, dark then light, to show on any image.
+  function guide(ctx, lines) {
+    const px = overlay.width / Math.max(1, overlay.clientWidth); // canvas pixels per CSS pixel
+    for (const [color, width] of [['rgba(0, 0, 0, 0.45)', 3], ['rgba(255, 255, 255, 0.75)', 1.25]]) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width * px;
+      ctx.setLineDash([6 * px, 5 * px]);
+      ctx.beginPath();
+      for (const [x0, y0, x1, y1] of lines) {
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  // Rays from the spot: the directions shapes will point in.
+  function drawRays(ctx) {
+    const w = overlay.width, h = overlay.height;
+    const fx = focus.x * w, fy = focus.y * h;
+    const reach = Math.hypot(w, h);
+    const inner = 22 * overlay.width / Math.max(1, overlay.clientWidth); // start outside the marker
+    const lines = [];
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * 2 * Math.PI;
+      const dx = Math.cos(a), dy = Math.sin(a);
+      lines.push([fx + dx * inner, fy + dy * inner, fx + dx * reach, fy + dy * reach]);
+    }
+    guide(ctx, lines);
+  }
+
+  // Parallel lines along the fixed angle.
+  function drawParallels(ctx) {
+    const w = overlay.width, h = overlay.height;
+    const a = (+el.angle.value * Math.PI) / 180;
+    const dx = Math.cos(a), dy = -Math.sin(a); // counterclockwise; canvas y points down
+    const nx = -dy, ny = dx;
+    const reach = Math.hypot(w, h);
+    const lines = [];
+    for (let k = -4; k <= 4; k++) {
+      const cx = w / 2 + nx * k * reach / 9, cy = h / 2 + ny * k * reach / 9;
+      lines.push([cx - dx * reach, cy - dy * reach, cx + dx * reach, cy + dy * reach]);
+    }
+    guide(ctx, lines);
   }
 
   // ------------------------------------------------------------ reading
