@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fogleman/primitive/primitive"
-	"github.com/nfnt/resize"
+	"github.com/pavankumar-dss/primitive/primitive"
 )
 
 var (
@@ -125,9 +123,6 @@ func main() {
 		primitive.LogLevel = 2
 	}
 
-	// seed random number generator
-	rand.Seed(time.Now().UTC().UnixNano())
-
 	// determine worker count
 	if Workers < 1 {
 		Workers = runtime.NumCPU()
@@ -139,9 +134,9 @@ func main() {
 	check(err)
 
 	// scale down input image if needed
-	size := uint(InputSize)
+	size := InputSize
 	if size > 0 {
-		input = resize.Thumbnail(size, size, input, resize.Bilinear)
+		input = primitive.Thumbnail(input, size)
 	}
 
 	// determine background color

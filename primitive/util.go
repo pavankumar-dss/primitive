@@ -9,11 +9,13 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
-	"io/ioutil"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+
+	xdraw "golang.org/x/image/draw"
 )
 
 func LoadImage(path string) (image.Image, error) {
@@ -29,6 +31,22 @@ func LoadImage(path string) (image.Image, error) {
 		im, _, err := image.Decode(file)
 		return im, err
 	}
+}
+
+// Thumbnail scales im down to fit within size x size, preserving its aspect
+// ratio. Images that already fit are returned unchanged.
+func Thumbnail(im image.Image, size int) image.Image {
+	b := im.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= size && h <= size {
+		return im
+	}
+	scale := math.Min(float64(size)/float64(w), float64(size)/float64(h))
+	nw := max(1, int(math.Round(float64(w)*scale)))
+	nh := max(1, int(math.Round(float64(h)*scale)))
+	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
+	xdraw.BiLinear.Scale(dst, dst.Bounds(), im, b, xdraw.Src, nil)
+	return dst
 }
 
 func SaveFile(path, contents string) error {
@@ -61,14 +79,14 @@ func SaveJPG(path string, im image.Image, quality int) error {
 		return err
 	}
 	defer file.Close()
-	return jpeg.Encode(file, im, &jpeg.Options{quality})
+	return jpeg.Encode(file, im, &jpeg.Options{Quality: quality})
 }
 
 func SaveGIF(path string, frames []image.Image, delay, lastDelay int) error {
 	g := gif.GIF{}
 	for i, src := range frames {
 		dst := image.NewPaletted(src.Bounds(), palette.Plan9)
-		draw.Draw(dst, dst.Rect, src, image.ZP, draw.Src)
+		draw.Draw(dst, dst.Rect, src, image.Point{}, draw.Src)
 		g.Image = append(g.Image, dst)
 		if i == len(frames)-1 {
 			g.Delay = append(g.Delay, lastDelay)
@@ -85,13 +103,16 @@ func SaveGIF(path string, frames []image.Image, delay, lastDelay int) error {
 }
 
 func SaveGIFImageMagick(path string, frames []image.Image, delay, lastDelay int) error {
-	dir, err := ioutil.TempDir("", "")
+	dir, err := os.MkdirTemp("", "primitive")
 	if err != nil {
 		return err
 	}
+	defer os.RemoveAll(dir)
 	for i, im := range frames {
 		path := filepath.Join(dir, fmt.Sprintf("%06d.png", i))
-		SavePNG(path, im)
+		if err := SavePNG(path, im); err != nil {
+			return err
+		}
 	}
 	args := []string{
 		"-loop", "0",
@@ -101,11 +122,18 @@ func SaveGIFImageMagick(path string, frames []image.Image, delay, lastDelay int)
 		filepath.Join(dir, fmt.Sprintf("%06d.png", len(frames)-1)),
 		path,
 	}
-	cmd := exec.Command("convert", args...)
-	if err := cmd.Run(); err != nil {
-		return err
+	// ImageMagick 7 ships "magick"; "convert" is the legacy (IM6) name
+	// and collides with a system tool on Windows.
+	name := "magick"
+	if _, err := exec.LookPath(name); err != nil {
+		if runtime.GOOS == "windows" {
+			return fmt.Errorf("gif output requires ImageMagick 7 (magick) on PATH")
+		}
+		name = "convert"
 	}
-	return os.RemoveAll(dir)
+	cmd := exec.Command(name, args...)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func NumberString(x float64) string {
@@ -169,7 +197,7 @@ func rotate(x, y, theta float64) (rx, ry float64) {
 
 func imageToRGBA(src image.Image) *image.RGBA {
 	dst := image.NewRGBA(src.Bounds())
-	draw.Draw(dst, dst.Rect, src, image.ZP, draw.Src)
+	draw.Draw(dst, dst.Rect, src, image.Point{}, draw.Src)
 	return dst
 }
 
@@ -181,7 +209,7 @@ func copyRGBA(src *image.RGBA) *image.RGBA {
 
 func uniformRGBA(r image.Rectangle, c color.Color) *image.RGBA {
 	im := image.NewRGBA(r)
-	draw.Draw(im, im.Bounds(), &image.Uniform{c}, image.ZP, draw.Src)
+	draw.Draw(im, im.Bounds(), &image.Uniform{c}, image.Point{}, draw.Src)
 	return im
 }
 

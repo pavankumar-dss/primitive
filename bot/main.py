@@ -32,13 +32,13 @@ MODE_NAMES = [
 ]
 
 SINCE_ID = None
-START_DATETIME = datetime.datetime.utcnow()
+START_DATETIME = datetime.datetime.now(datetime.timezone.utc)
 USER_DATETIME = {}
 
 try:
     from config import *
 except ImportError:
-    print 'no config found!'
+    print('no config found!')
 
 class AttrDict(dict):
     def __init__(self, *args, **kwargs):
@@ -118,15 +118,13 @@ def download_photo(url, path):
         fp.write(r.content)
 
 def primitive(**kwargs):
-    args = []
+    args = ['primitive']
     for k, v in kwargs.items():
         if v is None:
             continue
         args.append('-%s' % k)
         args.append(str(v))
-    args = ' '.join(args)
-    cmd = 'primitive %s' % args
-    subprocess.call(cmd, shell=True)
+    subprocess.call(args)
 
 def twitter_api():
     return twitter.Api(
@@ -141,59 +139,59 @@ def tweet(status, media, in_reply_to_status_id=None):
 
 def handle_mentions():
     global SINCE_ID
-    print 'checking for mentions'
+    print('checking for mentions')
     api = twitter_api()
     statuses = api.GetMentions(200, SINCE_ID)
     for status in reversed(statuses):
         SINCE_ID = status.id
-        print 'handling mention', status.id
+        print('handling mention', status.id)
         handle_mention(status)
-    print 'done with mentions'
+    print('done with mentions')
 
 def handle_mention(status):
     mentions = status.user_mentions or []
     if len(mentions) != 1:
-        print 'mention does not have exactly one mention'
+        print('mention does not have exactly one mention')
         return
     media = status.media or []
     if len(media) != 1:
-        print 'mention does not have exactly one media'
+        print('mention does not have exactly one media')
         return
     url = media[0].media_url or None
     if not url:
-        print 'mention does not have a media_url'
+        print('mention does not have a media_url')
         return
     created_at = datetime.datetime.strptime(
-        status.created_at, '%a %b %d %H:%M:%S +0000 %Y')
+        status.created_at, '%a %b %d %H:%M:%S %z %Y')
     if created_at < START_DATETIME:
-        print 'mention timestamp before bot started'
+        print('mention timestamp before bot started')
         return
     user_id = status.user.id
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     td = datetime.timedelta(minutes=5)
     if user_id in USER_DATETIME:
         if now - USER_DATETIME[user_id] < td:
-            print 'user mentioned me too recently'
+            print('user mentioned me too recently')
             return
     USER_DATETIME[user_id] = now
     in_path = os.path.join(INPUT_FOLDER, '%s.jpg' % status.id)
     out_path = os.path.join(OUTPUT_FOLDER, '%s.png' % status.id)
-    print 'downloading', url
+    print('downloading', url)
     download_photo(url, in_path)
     config = Config()
     config.randomize()
     config.parse(status.text)
     config.validate()
     status_text = '@%s %s.' % (status.user.screen_name, config.description)
-    print status_text
-    print 'running algorithm: %s' % config
+    print(status_text)
+    print('running algorithm: %s' % config)
     primitive(i=in_path, o=out_path, **config)
     if os.path.exists(out_path):
-        print 'uploading to twitter'
+        print('uploading to twitter')
         tweet(status_text, out_path, status.id)
-        print 'done'
+        print('done')
     else:
-        print 'failed!'
+        print('failed!')
 
 def flickr_url(photo_id):
     alphabet = '123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ'
@@ -209,28 +207,28 @@ def base_encode(alphabet, number, suffix=''):
 
 def generate():
     date = random_date()
-    print 'finding an interesting photo from', date
+    print('finding an interesting photo from', date)
     photos = interesting(date)
     photo = random.choice(photos)
-    print 'picked photo', photo['id']
+    print('picked photo', photo['id'])
     in_path = os.path.join(INPUT_FOLDER, '%s.jpg' % photo['id'])
     out_path = os.path.join(OUTPUT_FOLDER, '%s.png' % photo['id'])
     url = photo_url(photo, 'z')
-    print 'downloading', url
+    print('downloading', url)
     download_photo(url, in_path)
     config = Config()
     config.randomize()
     config.validate()
     status_text = '%s. %s' % (config.description, flickr_url(photo['id']))
-    print status_text
-    print 'running algorithm: %s' % config
+    print(status_text)
+    print('running algorithm: %s' % config)
     primitive(i=in_path, o=out_path, **config)
     if os.path.exists(out_path):
-        print 'uploading to twitter'
+        print('uploading to twitter')
         tweet(status_text, out_path)
-        print 'done'
+        print('done')
     else:
-        print 'failed!'
+        print('failed!')
 
 def main():
     previous = 0

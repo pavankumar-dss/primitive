@@ -1,6 +1,6 @@
-from Queue import Queue
 import itertools
 import os
+from queue import Queue
 import subprocess
 import sys
 import threading
@@ -13,9 +13,9 @@ def makedirs(x):
 
 def primitive(i, o, n, a, m):
     makedirs(os.path.split(o)[0])
-    args = (i, o, n, a, m)
-    cmd = 'primitive -r 128 -s 512 -i %s -o %s -n %d -a %d -m %d' % args
-    subprocess.call(cmd, shell=True)
+    cmd = ['primitive', '-r', '128', '-s', '512', '-i', i, '-o', o,
+           '-n', str(n), '-a', str(a), '-m', str(m)]
+    subprocess.call(cmd)
 
 def create_jobs(in_folder, out_folder, n, a, m):
     result = []
@@ -43,9 +43,8 @@ def worker(jobs, done):
 def process(in_folder, out_folder, nlist, alist, mlist, nworkers):
     jobs = Queue()
     done = Queue()
-    for i in xrange(nworkers):
-        t = threading.Thread(target=worker, args=(jobs, done))
-        t.setDaemon(True)
+    for i in range(nworkers):
+        t = threading.Thread(target=worker, args=(jobs, done), daemon=True)
         t.start()
     count = 0
     items = []
@@ -56,14 +55,14 @@ def process(in_folder, out_folder, nlist, alist, mlist, nworkers):
     for _, job in items:
         jobs.put(job)
         count += 1
-    for i in xrange(count):
+    for i in range(count):
         done.get()
 
 log_lock = threading.Lock()
 
 def log(x):
     with log_lock:
-        print x
+        print(x)
 
 if __name__ == '__main__':
     args = sys.argv[1:]

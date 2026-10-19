@@ -8,27 +8,27 @@ Reproducing images with geometric primitives.
 
 A target image is provided as input. The algorithm tries to find the single most optimal shape that can be drawn to minimize the error between the target image and the drawn image. It repeats this process, adding *one shape at a time*. Around 50 to 200 shapes are needed to reach a result that is recognizable yet artistic and abstract.
 
-### Primitive for macOS
+### Try it in your browser
 
-Now available as a native Mac application!
+https://pavankumar-dss.github.io/primitive/
 
-https://primitive.lol/
+Upload an image (or paste a link to one, including Pinterest pins) and watch it being rebuilt shape by shape. The original Go code runs locally in your browser via WebAssembly, so uploaded images never leave your device.
 
-### Twitter
+To run the site locally:
 
-Follow [@PrimitivePic](https://twitter.com/PrimitivePic) on Twitter to see a new primitive picture every 30 minutes!
-
-The Twitter bot looks for interesting photos using the Flickr API, runs the algorithm using randomized parameters, and
-posts the picture using the Twitter API.
-
-You can tweet a picture to the bot and it will process it for you.
+    sh scripts/build-site.sh
+    python3 -m http.server -d site
 
 ### Command-line Usage
 
-Run it on your own images! First, [install Go](https://golang.org/doc/install).
+Run it on your own images! First, [install Go](https://go.dev/doc/install) (1.26 or newer).
 
-    go get -u github.com/fogleman/primitive
+    go install github.com/pavankumar-dss/primitive@latest
     primitive -i input.png -o output.png -n 100
+
+Or build from a clone of this repository:
+
+    go build -o primitive .
 
 Small input images should be used (like 256x256px). You don't need the detail anyway and the code will run faster.
 
@@ -55,7 +55,7 @@ Depending on the output filename extension provided, you can produce different t
 - `PNG`: raster output
 - `JPG`: raster output
 - `SVG`: vector output
-- `GIF`: animated output showing shapes being added - requires ImageMagick (specifically the `convert` command)
+- `GIF`: animated output showing shapes being added - requires [ImageMagick](https://imagemagick.org/) (`magick`, or the legacy `convert` command outside Windows)
 
 For PNG and SVG outputs, you can also include `%d`, `%03d`, etc. in the filename. In this case, each frame will be saved separately.
 

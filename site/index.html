@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Primitive Pictures</title>
+<meta name="description" content="Reproduce any image with geometric primitives, right in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 28 14 4l12 24z' fill='%23f2b134' fill-opacity='.85'/%3E%3Ccircle cx='21' cy='18' r='9' fill='%23ed553b' fill-opacity='.7'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="masthead">
+  <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+    <path d="M2 28 14 4l12 24z" fill="#f2b134" fill-opacity=".85"/>
+    <circle cx="21" cy="18" r="9" fill="#ed553b" fill-opacity=".7"/>
+    <rect x="3" y="20" width="12" height="9" fill="#20639b" fill-opacity=".7"/>
+  </svg>
+  <div>
+    <h1>Primitive Pictures</h1>
+    <p>Reproduce images with geometric primitives, right in your browser.</p>
+  </div>
+  <a class="gh" href="https://github.com/pavankumar-dss/primitive">GitHub</a>
+</header>
+
+<main class="layout">
+  <form class="panel" id="controls" autocomplete="off">
+    <section>
+      <h2>Image</h2>
+      <label class="drop" id="drop" tabindex="0">
+        <input type="file" id="file" accept="image/*" hidden>
+        <strong>Drop an image</strong>
+        <span>or click to choose · paste with Ctrl+V</span>
+      </label>
+      <div class="url-row">
+        <input type="url" id="url" placeholder="…or paste an image link" aria-label="Image link">
+        <button type="button" id="load-url">Load</button>
+      </div>
+      <p class="hint">Direct image links work from most sites (Unsplash, Pexels, Imgur, Wikimedia…), as do Pinterest pin links.
+        For other pages, right-click the picture and choose <em>Copy image address</em>.</p>
+      <p class="samples">Try a sample:
+        <button type="button" data-sample="examples/monalisa.png">Mona Lisa</button>
+        <button type="button" data-sample="examples/owl.png">Owl</button>
+        <button type="button" data-sample="examples/pyramids.png">Pyramids</button>
+      </p>
+    </section>
+
+    <section>
+      <h2>Shapes</h2>
+      <label class="field">
+        <span>Shape</span>
+        <select id="mode">
+          <option value="1" selected>Triangles</option>
+          <option value="2">Rectangles</option>
+          <option value="5">Rotated rectangles</option>
+          <option value="3">Ellipses</option>
+          <option value="7">Rotated ellipses</option>
+          <option value="4">Circles</option>
+          <option value="8">Polygons</option>
+          <option value="6">Bézier curves</option>
+          <option value="0">Combo (mix of all)</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Number of shapes <output id="count-out">100</output></span>
+        <input type="range" id="count" min="10" max="1000" step="10" value="100">
+      </label>
+      <label class="field">
+        <span>Opacity <output id="alpha-out">128</output></span>
+        <input type="range" id="alpha" min="1" max="255" value="128">
+      </label>
+      <label class="check"><input type="checkbox" id="alpha-auto"> Let the algorithm pick opacity per shape</label>
+    </section>
+
+    <details>
+      <summary>Advanced</summary>
+      <label class="field">
+        <span>Working resolution</span>
+        <select id="input-size">
+          <option value="64">64 px (fastest)</option>
+          <option value="128" selected>128 px</option>
+          <option value="256">256 px (most accurate, slower)</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Output size</span>
+        <select id="output-size">
+          <option value="512">512 px</option>
+          <option value="1024" selected>1024 px</option>
+          <option value="2048">2048 px</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Extra shapes per step <output id="repeat-out">0</output></span>
+        <input type="range" id="repeat" min="0" max="20" value="0">
+      </label>
+      <div class="field">
+        <span>Background</span>
+        <div class="bg-row">
+          <label class="check"><input type="checkbox" id="bg-auto" checked> Average color</label>
+          <input type="color" id="bg" value="#ffffff" disabled aria-label="Background color">
+        </div>
+      </div>
+    </details>
+
+    <div class="actions">
+      <button type="submit" id="start" class="primary" disabled>Generate</button>
+      <button type="button" id="stop" hidden>Stop</button>
+    </div>
+    <p class="status" id="status" role="status">Loading the engine…</p>
+    <p class="privacy">Everything runs on your device. Uploaded files never leave it; links are fetched
+      directly, or through the <a href="https://wsrv.nl/">wsrv.nl</a> image proxy when a site blocks direct access.</p>
+  </form>
+
+  <section class="stage" aria-live="off">
+    <div class="progress" id="progress" hidden><div id="progress-bar"></div></div>
+    <div class="frames">
+      <figure>
+        <div class="frame" id="original"><p class="placeholder">Your image will appear here</p></div>
+        <figcaption>Original</figcaption>
+      </figure>
+      <figure>
+        <div class="frame" id="result"><p class="placeholder">…and its primitive version here</p></div>
+        <figcaption>
+          <span id="result-caption">Primitive</span>
+          <span class="downloads">
+            <button type="button" id="dl-png" disabled>PNG</button>
+            <button type="button" id="dl-svg" disabled>SVG</button>
+          </span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Based on <a href="https://github.com/fogleman/primitive">primitive</a> by Michael Fogleman · runs the original Go code via WebAssembly
+</footer>
+</body>
+</html>

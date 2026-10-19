@@ -2,3 +2,8 @@
 /*.svg
 /*.gif
 
+
+# browser build output (see scripts/build-site.sh)
+/site/primitive.wasm
+/site/wasm_exec.js
+/site/examples/
