@@ -8,7 +8,14 @@ const ui = {
   bgAuto: $('bg-auto'), bg: $('bg'), start: $('start'), stop: $('stop'), status: $('status'),
   progress: $('progress'), progressBar: $('progress-bar'),
   original: $('original'), result: $('result'), resultCaption: $('result-caption'),
-  dlPng: $('dl-png'), dlSvg: $('dl-svg'),
+  dlPng: $('dl-png'), dlSvg: $('dl-svg'), replay: $('replay'), duration: $('duration'),
+  exportButtons: [...document.querySelectorAll('[data-export]')], exportStatus: $('export-status'),
+};
+
+const EXPORTS = {
+  gif: { label: 'GIF', type: 'image/gif', suffix: '.gif' },
+  mp4: { label: 'MP4 video', type: 'video/mp4', suffix: '.mp4' },
+  svg: { label: 'animated SVG', type: 'image/svg+xml', suffix: '-animated.svg' },
 };
 
 const MODE_NAMES = {
@@ -23,6 +30,7 @@ let running = false;
 let lastSvg = null;
 let lastJob = null;
 let lastDone = 0;        // steps completed in the current run
+let exporting = null;    // format of the animation being made, if any
 
 // ---------------------------------------------------------------- worker
 
@@ -49,7 +57,28 @@ worker.onmessage = ({ data }) => {
       ui.resultCaption.textContent = shapeLabel(lastJob.count);
       break;
     case 'png':
-      if (data.bytes) download(new Blob([data.bytes], { type: 'image/png' }), 'png');
+      if (data.bytes) download(new Blob([data.bytes], { type: 'image/png' }), '.png');
+      break;
+    case 'export':
+      exporting = null;
+      if (data.purpose === 'replay') {
+        ui.result.innerHTML = data.data;
+        fitSvg(ui.result.querySelector('svg'));
+        setExportStatus('');
+      } else {
+        const blob = new Blob([data.data], { type: EXPORTS[data.format].type });
+        download(blob, EXPORTS[data.format].suffix);
+        setExportStatus(`Saved ${EXPORTS[data.format].label} (${fmtBytes(blob.size)}).`);
+      }
+      updateButtons();
+      break;
+    case 'export-progress':
+      setExportStatus(`Encoding video… ${Math.round(100 * data.done / data.total)}%`);
+      break;
+    case 'export-error':
+      exporting = null;
+      setExportStatus(data.message, true);
+      updateButtons();
       break;
     case 'error':
       finish('Something went wrong: ' + data.message + ' Reload the page to try again.', true);
@@ -82,6 +111,7 @@ async function useBlob(blob, name) {
   ui.result.innerHTML = '<p class="placeholder">Press Generate</p>';
   ui.resultCaption.textContent = 'Primitive';
   lastSvg = null;
+  setExportStatus('');
   setStatus(engineReady ? `Loaded ${bitmap.width}×${bitmap.height} image.` : 'Image loaded. Waiting for the engine…');
   updateButtons();
 }
@@ -237,6 +267,7 @@ ui.form.addEventListener('submit', (e) => {
   ui.progressBar.style.width = '0';
   ui.resultCaption.textContent = 'Primitive';
   setStatus('Starting…');
+  setExportStatus('');
   updateButtons();
   worker.postMessage({ type: 'start', pixels, width, height, ...job }, [pixels]);
   if (matchMedia('(max-width: 860px)').matches) ui.result.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -257,14 +288,24 @@ function finish(message, isError) {
 
 // ---------------------------------------------------------------- downloads
 
-function download(blob, ext) {
+function download(blob, suffix) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `${sourceName}-primitive.${ext}`;
+  a.download = `${sourceName}-primitive${suffix}`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
-ui.dlSvg.addEventListener('click', () => lastSvg && download(new Blob([lastSvg], { type: 'image/svg+xml' }), 'svg'));
+ui.dlSvg.addEventListener('click', () => lastSvg && download(new Blob([lastSvg], { type: 'image/svg+xml' }), '.svg'));
+
+function requestExport(format, purpose) {
+  if (!lastSvg || running || exporting) return;
+  exporting = format;
+  if (purpose === 'download') setExportStatus(`Making ${EXPORTS[format].label}…`);
+  updateButtons();
+  worker.postMessage({ type: 'export', format, purpose, duration: +ui.duration.value, size: lastJob.outputSize });
+}
+ui.exportButtons.forEach((b) => b.addEventListener('click', () => requestExport(b.dataset.export, 'download')));
+ui.replay.addEventListener('click', () => requestExport('svg', 'replay'));
 ui.dlPng.addEventListener('click', () => worker.postMessage({ type: 'png' }));
 
 // ---------------------------------------------------------------- ui state
@@ -279,6 +320,9 @@ function updateButtons() {
   ui.start.hidden = running;
   ui.stop.hidden = !running;
   ui.dlPng.disabled = ui.dlSvg.disabled = !lastSvg;
+  const noAnim = !lastSvg || running || !!exporting;
+  ui.exportButtons.forEach((b) => { b.disabled = noAnim; });
+  ui.replay.disabled = noAnim;
 }
 
 // The Go SVG has a fixed width/height and no viewBox; add one so CSS can scale it.
@@ -291,13 +335,22 @@ function shapeLabel(steps) {
   return `${steps * (1 + lastJob.repeat)} ${MODE_NAMES[lastJob.mode]}`;
 }
 
+function setExportStatus(text, isError) {
+  ui.exportStatus.textContent = text;
+  ui.exportStatus.classList.toggle('error', !!isError);
+}
+
+function fmtBytes(n) {
+  return n < 1e6 ? `${Math.max(1, Math.round(n / 1e3))} KB` : `${(n / 1e6).toFixed(1)} MB`;
+}
+
 function fmtTime(ms) {
   const s = Math.round(ms / 1000);
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
 
-for (const [input, out] of [['count', 'count-out'], ['alpha', 'alpha-out'], ['repeat', 'repeat-out']]) {
-  const sync = () => { $(out).textContent = $(input).value; };
+for (const [input, out, unit = ''] of [['count', 'count-out'], ['alpha', 'alpha-out'], ['repeat', 'repeat-out'], ['duration', 'duration-out', 's']]) {
+  const sync = () => { $(out).textContent = $(input).value + unit; };
   $(input).addEventListener('input', sync);
   sync();
 }

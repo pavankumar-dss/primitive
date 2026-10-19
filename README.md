@@ -12,7 +12,7 @@ A target image is provided as input. The algorithm tries to find the single most
 
 https://pavankumar-dss.github.io/primitive/
 
-Upload an image (or paste a link to one, including Pinterest pins) and watch it being rebuilt shape by shape. The original Go code runs locally in your browser via WebAssembly, so uploaded images never leave your device.
+Upload an image (or paste a link to one, including Pinterest pins) and watch it being rebuilt shape by shape. Download the result as PNG or SVG, or as an animation of the shapes being added: GIF, MP4 video or animated SVG. The original Go code runs locally in your browser via WebAssembly, so uploaded images never leave your device.
 
 To run the site locally:
 
@@ -55,7 +55,7 @@ Depending on the output filename extension provided, you can produce different t
 - `PNG`: raster output
 - `JPG`: raster output
 - `SVG`: vector output
-- `GIF`: animated output showing shapes being added - requires [ImageMagick](https://imagemagick.org/) (`magick`, or the legacy `convert` command outside Windows)
+- `GIF`: animated output showing shapes being added (built in, no external tools needed)
 
 For PNG and SVG outputs, you can also include `%d`, `%03d`, etc. in the filename. In this case, each frame will be saved separately.
 

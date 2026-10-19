@@ -59,8 +59,57 @@ func pngBytes(this js.Value, args []js.Value) any {
 	if err := png.Encode(&buf, model.Context.Image()); err != nil {
 		return js.Null()
 	}
-	out := js.Global().Get("Uint8Array").New(buf.Len())
-	js.CopyBytesToJS(out, buf.Bytes())
+	return toJS(buf.Bytes())
+}
+
+// primitiveAnimatedSVG(duration) returns an SVG in which the shapes fade
+// in over duration seconds.
+func animatedSVG(this js.Value, args []js.Value) any {
+	if model == nil {
+		return js.Null()
+	}
+	return model.AnimatedSVG(args[0].Float())
+}
+
+// primitiveGIF(maxSide, frames, delay, lastDelay) returns an animated GIF;
+// delays are in hundredths of a second.
+func gifBytes(this js.Value, args []js.Value) any {
+	if model == nil {
+		return js.Null()
+	}
+	var buf bytes.Buffer
+	if err := model.EncodeGIF(&buf, args[0].Int(), args[1].Int(), args[2].Int(), args[3].Int()); err != nil {
+		return js.Null()
+	}
+	return toJS(buf.Bytes())
+}
+
+var (
+	animator *primitive.Animator
+	counts   []int
+)
+
+// primitiveAnimStart(maxSide, frames) prepares to render video frames with
+// even dimensions and returns {width, height}.
+func animStart(this js.Value, args []js.Value) any {
+	if model == nil {
+		return js.Null()
+	}
+	animator = model.NewAnimator(args[0].Int(), true)
+	counts = model.AnimationCounts(args[1].Int())
+	w, h := animator.Size()
+	return map[string]any{"width": w, "height": h}
+}
+
+// primitiveAnimFrame(k) returns frame k as RGBA bytes. Frames must be
+// requested in order.
+func animFrame(this js.Value, args []js.Value) any {
+	return toJS(animator.Frame(counts[args[0].Int()]).Pix)
+}
+
+func toJS(b []byte) js.Value {
+	out := js.Global().Get("Uint8Array").New(len(b))
+	js.CopyBytesToJS(out, b)
 	return out
 }
 
@@ -69,5 +118,9 @@ func main() {
 	js.Global().Set("primitiveStep", js.FuncOf(step))
 	js.Global().Set("primitiveSVG", js.FuncOf(svg))
 	js.Global().Set("primitivePNG", js.FuncOf(pngBytes))
+	js.Global().Set("primitiveAnimatedSVG", js.FuncOf(animatedSVG))
+	js.Global().Set("primitiveGIF", js.FuncOf(gifBytes))
+	js.Global().Set("primitiveAnimStart", js.FuncOf(animStart))
+	js.Global().Set("primitiveAnimFrame", js.FuncOf(animFrame))
 	select {}
 }

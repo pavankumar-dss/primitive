@@ -94,6 +94,10 @@
         <span>Extra shapes per step <output id="repeat-out">0</output></span>
         <input type="range" id="repeat" min="0" max="20" value="0">
       </label>
+      <label class="field">
+        <span>Animation length <output id="duration-out">5s</output></span>
+        <input type="range" id="duration" min="2" max="15" value="5">
+      </label>
       <div class="field">
         <span>Background</span>
         <div class="bg-row">
@@ -123,12 +127,23 @@
         <div class="frame" id="result"><p class="placeholder">…and its primitive version here</p></div>
         <figcaption>
           <span id="result-caption">Primitive</span>
-          <span class="downloads">
-            <button type="button" id="dl-png" disabled>PNG</button>
-            <button type="button" id="dl-svg" disabled>SVG</button>
-          </span>
+          <button type="button" id="replay" disabled>▶ Replay</button>
         </figcaption>
       </figure>
+    </div>
+    <div class="exports" id="exports">
+      <div class="export-group">
+        <span>Image</span>
+        <button type="button" id="dl-png" disabled>PNG</button>
+        <button type="button" id="dl-svg" disabled>SVG</button>
+      </div>
+      <div class="export-group">
+        <span>Animation</span>
+        <button type="button" data-export="gif" disabled>GIF</button>
+        <button type="button" data-export="mp4" disabled>MP4</button>
+        <button type="button" data-export="svg" disabled>Animated SVG</button>
+      </div>
+      <p class="export-status" id="export-status" role="status"></p>
     </div>
   </section>
 </main>

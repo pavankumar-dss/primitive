@@ -7,3 +7,10 @@ GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o site/primitive.wasm .
 cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/
 mkdir -p site/examples
 cp examples/*.png site/examples/
+
+# MP4 export muxer (MPL-2.0), pinned and checksummed
+MEDIABUNNY=1.61.1
+MEDIABUNNY_SHA256=652fbe9226e55cb0c0784aaba6b4b73fea4fc0df498f62050cdc617a4bd97ca2
+mkdir -p site/vendor
+curl -fsSL -o site/vendor/mediabunny.min.mjs   "https://cdn.jsdelivr.net/npm/mediabunny@$MEDIABUNNY/dist/bundles/mediabunny.min.mjs"
+echo "$MEDIABUNNY_SHA256  site/vendor/mediabunny.min.mjs" | sha256sum -c -

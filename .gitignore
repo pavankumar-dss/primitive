@@ -7,3 +7,4 @@
 /site/primitive.wasm
 /site/wasm_exec.js
 /site/examples/
+/site/vendor/

@@ -102,6 +102,17 @@ func SaveGIF(path string, frames []image.Image, delay, lastDelay int) error {
 	return gif.EncodeAll(file, &g)
 }
 
+// SaveAnimatedGIF writes an animated GIF of the model's shapes being added;
+// see Model.EncodeGIF.
+func SaveAnimatedGIF(path string, model *Model, maxSide, frames, delay, lastDelay int) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return model.EncodeGIF(file, maxSide, frames, delay, lastDelay)
+}
+
 func SaveGIFImageMagick(path string, frames []image.Image, delay, lastDelay int) error {
 	dir, err := os.MkdirTemp("", "primitive")
 	if err != nil {
