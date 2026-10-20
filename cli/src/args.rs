@@ -31,6 +31,9 @@ Usage: primitive [OPTIONS] -i input -o output -n count
   -region path  image whose white areas are the only places shapes may go
   -keep         with -region, keep the input image outside the region
                 (shapes are clipped to it) instead of the background color
+  -detail path  image whose white areas get extra detail: errors there
+                count more, so more and finer shapes go there
+  -detailboost n  how many times more they count (default 4)
   -v, -vv       verbose, very verbose";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -58,6 +61,8 @@ pub struct Args {
     pub max_size: f64,
     pub region: Option<String>,
     pub keep: bool,
+    pub detail: Option<String>,
+    pub detail_boost: u32,
     pub verbose: u8,
 }
 
@@ -92,6 +97,8 @@ pub fn parse(argv: impl IntoIterator<Item = String>) -> Result<Option<Args>, Str
         max_size: 0.0,
         region: None,
         keep: false,
+        detail: None,
+        detail_boost: 4,
         verbose: 0,
     };
     while let Some(arg) = argv.next() {
@@ -157,6 +164,8 @@ pub fn parse(argv: impl IntoIterator<Item = String>) -> Result<Option<Args>, Str
                     "minsize" => a.min_size = number(name, &value)?,
                     "maxsize" => a.max_size = number(name, &value)?,
                     "region" => a.region = Some(value),
+                    "detail" => a.detail = Some(value),
+                    "detailboost" => a.detail_boost = number(name, &value)?,
                     _ => return Err(format!("unknown flag -{name}")),
                 }
             }
@@ -188,6 +197,9 @@ pub fn parse(argv: impl IntoIterator<Item = String>) -> Result<Option<Args>, Str
     }
     if a.min_size < 0.0 || a.max_size < 0.0 || (a.max_size > 0.0 && a.min_size > a.max_size) {
         errors.push("-minsize and -maxsize must be positive, with minsize <= maxsize".into());
+    }
+    if !(1..=255).contains(&a.detail_boost) {
+        errors.push("-detailboost must be from 1 to 255".into());
     }
     if a.keep && a.region.is_none() {
         errors.push("-keep needs -region".into());
@@ -240,6 +252,19 @@ mod tests {
         // with one count, settings after it still apply
         let a = run("-i a -o b -n 50 -m 6 --a=40").unwrap();
         assert_eq!((a.configs[0].mode, a.configs[0].alpha), (6, 40));
+    }
+
+    #[test]
+    fn detail() {
+        let a = run("-i a -o b -n 5 -detail face.png").unwrap();
+        assert_eq!((a.detail.as_deref(), a.detail_boost), (Some("face.png"), 4));
+        let a = run("-i a -o b -n 5 -detail face.png -detailboost 10").unwrap();
+        assert_eq!(a.detail_boost, 10);
+        assert!(
+            run("-i a -o b -n 5 -detailboost 0")
+                .unwrap_err()
+                .contains("-detailboost")
+        );
     }
 
     #[test]

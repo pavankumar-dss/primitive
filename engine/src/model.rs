@@ -3,7 +3,7 @@
 //! optimize.go in the original Go package.
 
 use crate::constraints::Constraints;
-use crate::core::{self, Clip, Color, Scanline};
+use crate::core::{self, Clip, Color, Scanline, Weights};
 use crate::palette::Palette;
 use crate::raster::Rasterizer;
 use crate::render::Base;
@@ -52,6 +52,8 @@ pub struct Model {
     /// what renders show outside that region (see keep_outside)
     pub base: Option<Base>,
     palette: Option<Palette>,
+    /// how much each pixel's error counts, if not all the same
+    weights: Option<Weights>,
     worker: Worker,
 }
 
@@ -89,7 +91,7 @@ impl Model {
                 background.a as u8,
             ]);
         }
-        let score = core::difference_full(&target, &current);
+        let score = core::difference_full(&target, &current, None);
         Model {
             w,
             h,
@@ -107,6 +109,7 @@ impl Model {
             clip: None,
             base: None,
             palette: None,
+            weights: None,
             worker: Worker {
                 buffer: vec![0; w * h * 4],
                 lines: Vec::with_capacity(4096),
@@ -161,7 +164,7 @@ impl Model {
             }
         }
         self.background = bg;
-        self.score = core::difference_full(&self.target, &self.current);
+        self.score = core::difference_full(&self.target, &self.current, self.weights.as_ref());
         self.clip = Some(Clip::new(mask, self.w, self.h));
         self.base = Some(Base {
             w: self.w,
@@ -185,6 +188,14 @@ impl Model {
 
     /// Limits the colors of shapes added from now on to a palette. Models
     /// that replay each other's shapes need the same palette.
+    /// Makes some pixels' errors count more than others (see Weights), so
+    /// the search spends more shapes on detail there. The score is then
+    /// weighted too.
+    pub fn set_detail(&mut self, weights: Option<Weights>) {
+        self.weights = weights;
+        self.score = core::difference_full(&self.target, &self.current, self.weights.as_ref());
+    }
+
     pub fn set_palette(&mut self, p: Option<Palette>) {
         self.palette = p;
     }
@@ -207,9 +218,16 @@ impl Model {
         let (w, h) = (self.w, self.h);
         let wk = &mut self.worker;
         let lines = &wk.lines;
-        let palette = self.palette.as_ref();
-        let color =
-            core::compute_color(&self.target, &self.current, w, lines, state.alpha, palette);
+        let (palette, weights) = (self.palette.as_ref(), self.weights.as_ref());
+        let color = core::compute_color(
+            &self.target,
+            &self.current,
+            w,
+            lines,
+            state.alpha,
+            palette,
+            weights,
+        );
         core::copy_lines(&mut wk.buffer, &self.current, w, lines);
         core::draw_lines(&mut wk.buffer, w, color, lines);
         let mut energy = core::difference_partial(
@@ -220,6 +238,7 @@ impl Model {
             h,
             self.score,
             lines,
+            weights,
         );
         if let Some(c) = &self.constraints {
             let v = c.violation(lines, w);
@@ -346,8 +365,16 @@ impl Model {
         let (w, h) = (self.w, self.h);
         let wk = &mut self.worker;
         let lines = &wk.lines;
-        let palette = self.palette.as_ref();
-        let color = core::compute_color(&self.target, &self.current, w, lines, alpha, palette);
+        let (palette, weights) = (self.palette.as_ref(), self.weights.as_ref());
+        let color = core::compute_color(
+            &self.target,
+            &self.current,
+            w,
+            lines,
+            alpha,
+            palette,
+            weights,
+        );
         // the buffer keeps the pixels from before the shape for scoring
         core::copy_lines(&mut wk.buffer, &self.current, w, lines);
         core::draw_lines(&mut self.current, w, color, lines);
@@ -359,6 +386,7 @@ impl Model {
             h,
             self.score,
             lines,
+            weights,
         );
         self.shapes.push(shape);
         self.colors.push(color);
@@ -546,7 +574,7 @@ mod tests {
             let s = m.search(ShapeType::RotatedEllipse, 0, 1);
             m.commit(s, 0);
         }
-        let full = core::difference_full(&m.target, &m.current);
+        let full = core::difference_full(&m.target, &m.current, None);
         // as in Go, the running total is truncated each step, so it drifts a little
         assert!((m.score - full).abs() < 1e-6, "{} vs {}", m.score, full);
     }
@@ -598,7 +626,7 @@ mod tests {
                 "pixel {i} outside changed"
             );
         }
-        assert!((m.score - core::difference_full(&m.target, &m.current)).abs() < 1e-6);
+        assert!((m.score - core::difference_full(&m.target, &m.current, None)).abs() < 1e-6);
 
         // a follower that keeps the same region replays to the same picture
         let mut follower = test_model(6);
@@ -644,6 +672,93 @@ mod tests {
                 .iter()
                 .all(|c| colors.iter().any(|p| (p.r, p.g, p.b) == (c.r, c.g, c.b)))
         );
+    }
+
+    /// A 64 x 48 checkerboard of 8-pixel squares: detail everywhere,
+    /// so shapes spent on one part are not spent on another.
+    fn checkered_model(seed: u64) -> Model {
+        let (w, h) = (64, 48);
+        let mut pix = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let v = if (x / 8 + y / 8) % 2 == 0 { 220 } else { 40 };
+                pix[(y * w + x) * 4..][..4].copy_from_slice(&[v, (y * 4) as u8, 255 - v, 255]);
+            }
+        }
+        let bg = core::average_color(&pix);
+        Model::new(pix, w, h, bg, 128, seed)
+    }
+
+    /// The plain RMS error over the pixels where mask is set.
+    fn error_in(m: &Model, mask: &[u8]) -> f64 {
+        let (mut sum, mut n) = (0.0, 0.0);
+        for i in (0..m.w * m.h).filter(|&i| mask[i] > 0) {
+            for c in 0..3 {
+                sum += (m.target[i * 4 + c] as f64 - m.current[i * 4 + c] as f64).powi(2);
+                n += 1.0;
+            }
+        }
+        (sum / n).sqrt()
+    }
+
+    #[test]
+    fn detail_spends_shapes_where_painted() {
+        let striped = checkered_model(0);
+        let mask: Vec<u8> = (0..striped.w * striped.h)
+            .map(|i| if i % striped.w < 24 { 255 } else { 0 })
+            .collect();
+        // even weights change nothing
+        let mut even = checkered_model(9);
+        let mut plain = checkered_model(9);
+        even.set_detail(Some(Weights::new(vec![1; even.w * even.h])));
+        for _ in 0..5 {
+            let s = plain.search(ShapeType::Triangle, 128, 1);
+            plain.commit(s, 0);
+            let s = even.search(ShapeType::Triangle, 128, 1);
+            even.commit(s, 0);
+        }
+        assert!(even.current == plain.current);
+        assert_eq!(even.score, plain.score);
+
+        // with detail on the left, it comes out closer there over a few seeds
+        let (mut with, mut without) = (0.0, 0.0);
+        for seed in 0..3 {
+            let mut d = checkered_model(seed);
+            d.set_detail(Some(Weights::from_mask(&mask, 8)));
+            let mut p = checkered_model(seed);
+            for _ in 0..25 {
+                let s = d.search(ShapeType::Triangle, 128, 2);
+                d.commit(s, 0);
+                let s = p.search(ShapeType::Triangle, 128, 2);
+                p.commit(s, 0);
+            }
+            let full = core::difference_full(&d.target, &d.current, d.weights.as_ref());
+            assert!(
+                (d.score - full).abs() < 1e-6,
+                "weighted score drifted: {} vs {full}",
+                d.score
+            );
+            with += error_in(&d, &mask);
+            without += error_in(&p, &mask);
+        }
+        assert!(
+            with < without * 0.95,
+            "left part: {with} with detail, {without} without"
+        );
+
+        // replays need the same weights, and then match
+        let mut searcher = checkered_model(4);
+        searcher.set_detail(Some(Weights::from_mask(&mask, 8)));
+        let mut follower = checkered_model(5);
+        follower.set_detail(Some(Weights::from_mask(&mask, 8)));
+        for _ in 0..6 {
+            let s = searcher.search(ShapeType::Any, 0, 1);
+            for s in searcher.commit(s, 1) {
+                follower.add(s.shape, s.alpha);
+            }
+        }
+        assert!(follower.current == searcher.current);
+        assert_eq!(follower.score, searcher.score);
     }
 
     #[test]

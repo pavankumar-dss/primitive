@@ -301,6 +301,7 @@ ui.form.addEventListener('submit', (e) => {
   const pixels = ctx.getImageData(0, 0, width, height).data.buffer;
   const transfer = [pixels];
   if (job.constraints && job.constraints.region) transfer.push(job.constraints.region);
+  if (job.constraints && job.constraints.detail) transfer.push(job.constraints.detail);
   keepLayers(job.constraints && job.constraints.keep ? job : null, width, height, transfer);
   lastJob = job;
   lastShapes = 0;

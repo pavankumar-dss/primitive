@@ -6,7 +6,7 @@ mod args;
 use args::{Args, USAGE};
 use image::imageops::FilterType;
 use primitive_engine::constraints::{Constraints, Options};
-use primitive_engine::core::{self, Color};
+use primitive_engine::core::{self, Color, Weights};
 use primitive_engine::gif;
 use primitive_engine::model::{Model, State};
 use primitive_engine::palette::Palette;
@@ -75,6 +75,14 @@ fn run(args: &Args) -> Result<(), String> {
         None => None,
     };
     let region = region_image.as_ref().map(|r| mask(r, w, h));
+    let detail = match &args.detail {
+        Some(path) => Some(mask(
+            &load_image(path).map_err(|e| format!("reading -detail: {e}"))?,
+            w,
+            h,
+        )),
+        None => None,
+    };
     let options = Options {
         focus: args.focus,
         angle: args.angle,
@@ -97,10 +105,14 @@ fn run(args: &Args) -> Result<(), String> {
         .map(|k| {
             let mut m = Model::new(pixels.clone(), w, h, background, args.output_size, seed + k);
             m.set_constraints(Constraints::new(&options, w, h));
+            // the palette first: a kept region starts in one of its colors
+            m.set_palette(palette.clone());
             if let (true, Some(region)) = (args.keep, &region) {
                 m.keep_outside(region, chosen_background);
             }
-            m.set_palette(palette.clone());
+            if let Some(d) = &detail {
+                m.set_detail(Some(Weights::from_mask(d, args.detail_boost)));
+            }
             m
         })
         .collect();

@@ -5,7 +5,9 @@
 //                    → starting score; background is hex or '' for average;
 //                      palette is null, a number of colors to choose from
 //                      the image, or a list of hex colors; constraints.keep
-//                      keeps the image outside constraints.region
+//                      keeps the image outside constraints.region, and
+//                      constraints.detail (a byte per pixel) makes errors
+//                      there count up to constraints.detailBoost times more
 //   search(mode, alpha, searches, fresh) → energy of the best shape so far
 //   setBase(pixels, mask, width, height) → what renders show around a kept
 //                    region: RGBA pixels and a mask byte per pixel, any size
@@ -36,7 +38,7 @@ async function loadEngine(module) {
       input.set(pixels);
       given.forEach((c, k) => input.set([c >> 16 & 255, c >> 8 & 255, c & 255], pixels.length + k * 3));
       put(input);
-      const score = x.init(width, height, outputSize, background ? parseInt(background, 16) : -1, seed,
+      let score = x.init(width, height, outputSize, background ? parseInt(background, 16) : -1, seed,
         given.length || palette || 0, given.length ? 1 : 0);
       if (constraints) {
         const c = constraints;
@@ -47,7 +49,11 @@ async function loadEngine(module) {
         x.set_constraints(flags, c.focus ? c.focus[0] : 0, c.focus ? c.focus[1] : 0, c.angle || 0, c.minSize || 0, c.maxSize || 0);
         if (c.keep && c.region) {
           put(c.region);
-          return x.keep_outside(background ? parseInt(background, 16) : -1);
+          score = x.keep_outside(background ? parseInt(background, 16) : -1);
+        }
+        if (c.detail) {
+          put(c.detail);
+          score = x.set_detail(c.detailBoost || 4);
         }
       }
       return score;

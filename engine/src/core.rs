@@ -36,6 +36,7 @@ pub fn compute_color(
     lines: &[Scanline],
     alpha: i32,
     palette: Option<&Palette>,
+    weights: Option<&Weights>,
 ) -> Color {
     let (mut rsum, mut gsum, mut bsum, mut count) = (0i64, 0i64, 0i64, 0i64);
     let a = (0x101 * 255 / alpha) as i64;
@@ -45,17 +46,30 @@ pub fn compute_color(
         let t = &target[i..i + n * 4];
         let c = &current[i..i + n * 4];
         let (mut rs, mut gs, mut bs) = (0i64, 0i64, 0i64);
-        for (t, c) in t.as_chunks::<4>().0.iter().zip(c.as_chunks::<4>().0) {
-            // a is up to 0xffff at alpha 1, so per-pixel terms need 64 bits
-            let (cr, cg, cb) = (c[0] as i64, c[1] as i64, c[2] as i64);
-            rs += (t[0] as i64 - cr) * a + cr * 0x101;
-            gs += (t[1] as i64 - cg) * a + cg * 0x101;
-            bs += (t[2] as i64 - cb) * a + cb * 0x101;
+        let pixels = t.as_chunks::<4>().0.iter().zip(c.as_chunks::<4>().0);
+        if let Some(wt) = weights {
+            // the weighted mean of each pixel's best color
+            let wt = &wt.pix[i / 4..i / 4 + n];
+            for ((t, c), &k) in pixels.zip(wt) {
+                let (cr, cg, cb, k) = (c[0] as i64, c[1] as i64, c[2] as i64, k as i64);
+                rs += ((t[0] as i64 - cr) * a + cr * 0x101) * k;
+                gs += ((t[1] as i64 - cg) * a + cg * 0x101) * k;
+                bs += ((t[2] as i64 - cb) * a + cb * 0x101) * k;
+                count += k;
+            }
+        } else {
+            for (t, c) in pixels {
+                // a is up to 0xffff at alpha 1, so per-pixel terms need 64 bits
+                let (cr, cg, cb) = (c[0] as i64, c[1] as i64, c[2] as i64);
+                rs += (t[0] as i64 - cr) * a + cr * 0x101;
+                gs += (t[1] as i64 - cg) * a + cg * 0x101;
+                bs += (t[2] as i64 - cb) * a + cb * 0x101;
+            }
+            count += n as i64;
         }
         rsum += rs;
         gsum += gs;
         bsum += bs;
-        count += n as i64;
     }
     if count == 0 {
         return Color::default();
@@ -193,18 +207,67 @@ impl Clip {
     }
 }
 
-/// Root mean square difference of two images, from 0 to 1.
-pub fn difference_full(a: &[u8], b: &[u8]) -> f64 {
-    let mut total = 0u64;
-    for (a, b) in a.iter().zip(b) {
-        let d = *a as i32 - *b as i32;
-        total += (d * d) as u64;
+/// How much each pixel's error counts, for extra detail in some areas: a
+/// weight of 1 or more per pixel.
+pub struct Weights {
+    pix: Vec<u8>,
+    total: u64,
+}
+
+impl Weights {
+    pub fn new(pix: Vec<u8>) -> Weights {
+        let pix: Vec<u8> = pix.into_iter().map(|k| k.max(1)).collect();
+        let total = pix.iter().map(|&k| k as u64).sum();
+        Weights { pix, total }
     }
-    (total as f64 / a.len() as f64).sqrt() / 255.0
+
+    /// Weights from a mask (one byte per pixel, 255 for full detail): 1
+    /// outside it, rising to boost inside.
+    pub fn from_mask(mask: &[u8], boost: u32) -> Weights {
+        let extra = boost.saturating_sub(1).min(254);
+        Weights::new(
+            mask.iter()
+                .map(|&m| (1 + (extra * m as u32 + 127) / 255) as u8)
+                .collect(),
+        )
+    }
+}
+
+/// Root mean square difference of two images, from 0 to 1, with each
+/// pixel's error counted as many times as its weight, if any.
+pub fn difference_full(a: &[u8], b: &[u8], weights: Option<&Weights>) -> f64 {
+    let mut total = 0u64;
+    let n = match weights {
+        Some(wt) => {
+            for ((a, b), &k) in a
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(b.as_chunks::<4>().0)
+                .zip(&wt.pix)
+            {
+                let d: u64 = (0..4)
+                    .map(|c| (a[c] as i64 - b[c] as i64).pow(2) as u64)
+                    .sum();
+                total += d * k as u64;
+            }
+            wt.total * 4
+        }
+        None => {
+            for (a, b) in a.iter().zip(b) {
+                let d = *a as i32 - *b as i32;
+                total += (d * d) as u64;
+            }
+            a.len() as u64
+        }
+    };
+    (total as f64 / n as f64).sqrt() / 255.0
 }
 
 /// Updates score, the difference between target and before, for after,
-/// which differs from before only on lines.
+/// which differs from before only on lines (weighted as in
+/// difference_full).
+#[allow(clippy::too_many_arguments)]
 pub fn difference_partial(
     target: &[u8],
     before: &[u8],
@@ -213,8 +276,9 @@ pub fn difference_partial(
     h: usize,
     score: f64,
     lines: &[Scanline],
+    weights: Option<&Weights>,
 ) -> f64 {
-    let n = (w * h * 4) as f64;
+    let n = weights.map_or((w * h * 4) as f64, |wt| (wt.total * 4) as f64);
     let mut total = ((score * 255.0).powi(2) * n) as i64;
     for line in lines {
         let i = offset(w, line.x1, line.y);
@@ -222,13 +286,28 @@ pub fn difference_partial(
         let t = &target[i..i + len];
         let b = &before[i..i + len];
         let a = &after[i..i + len];
-        let mut sum = 0i32;
-        for k in 0..len {
-            let d1 = t[k] as i32 - b[k] as i32;
-            let d2 = t[k] as i32 - a[k] as i32;
-            sum += d2 * d2 - d1 * d1;
+        if let Some(wt) = weights {
+            let wt = &wt.pix[i / 4..i / 4 + len / 4];
+            let mut sum = 0i64;
+            for (p, &k) in wt.iter().enumerate() {
+                let mut d = 0i32;
+                for c in p * 4..p * 4 + 4 {
+                    let d1 = t[c] as i32 - b[c] as i32;
+                    let d2 = t[c] as i32 - a[c] as i32;
+                    d += d2 * d2 - d1 * d1;
+                }
+                sum += d as i64 * k as i64;
+            }
+            total += sum;
+        } else {
+            let mut sum = 0i32;
+            for k in 0..len {
+                let d1 = t[k] as i32 - b[k] as i32;
+                let d2 = t[k] as i32 - a[k] as i32;
+                sum += d2 * d2 - d1 * d1;
+            }
+            total += sum as i64;
         }
-        total += sum as i64;
     }
     (total.max(0) as f64 / n).sqrt() / 255.0
 }
@@ -276,5 +355,13 @@ mod tests {
                 line(2, 4, 5)
             ]
         );
+    }
+
+    #[test]
+    fn weights_from_a_mask() {
+        let w = Weights::from_mask(&[0, 128, 255], 9);
+        assert_eq!(w.pix, [1, 5, 9]);
+        assert_eq!(w.total, 15);
+        assert_eq!(Weights::from_mask(&[255], 1).pix, [1]);
     }
 }

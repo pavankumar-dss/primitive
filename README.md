@@ -46,6 +46,8 @@ Small input images should be used (like 256x256px). You don't need the detail an
 | `minsize` | 0 | smallest shape, as a fraction of the image's longest side (`0` = no limit) |
 | `maxsize` | 0 | largest shape, as a fraction of the image's longest side (`0` = no limit) |
 | `region` | off | image whose white areas are the only places shapes may go |
+| `detail` | off | image whose white areas get extra detail: errors there count more, so more and finer shapes go there |
+| `detailboost` | 4 | how many times more the `detail` areas count |
 | `keep` | off | with `region`, keep the input image outside the region (shapes are clipped to it) instead of the background color |
 | `v` | off | verbose output |
 | `vv` | off | very verbose output |
@@ -109,6 +111,7 @@ Available constraints, on the command line and on the website (under "Constraint
 - **Direction** (`-focus` or `-angle`): triangles, rotated rectangles, rotated ellipses and Bézier curves point toward a spot or along a fixed angle. Rectangles and ellipses are kept at least twice as long as they are wide, so their direction shows, and triangles become arrowheads at least twice as long as their base, with the tip pointing toward the spot or along the angle.
 - **Size** (`-minsize`, `-maxsize`): only small shapes for a mosaic look, or only large ones for bolder abstraction.
 - **Region** (`-region mask.png`): shapes only go where the mask is white (up to 10% of a shape may spill over); everything else stays the background color. Add `-keep` to keep the original image around the region instead: shapes are then clipped to it, so a subject can be converted while its photo background stays (or, with an inverted mask, the other way around). On the website you paint the region onto the image, or click the subject and let [SlimSAM](https://github.com/czg1225/SlimSAM), a small version of Segment Anything, select it. That runs in your browser too, from about 28 MB of model files the site downloads the first time.
+- **Detail** (`-detail mask.png`): errors where the mask is white count more (4 times by default, `-detailboost` up to 255), so the search spends more and finer shapes there and fewer elsewhere. With 8 times the weight on a face, its error drops by 20-30% and the rest's rises by about 10%. On the website you paint the detail areas, or select the subject, under "Extra detail where I paint".
 
 To invent your own, see [`engine/src/constraints.rs`](engine/src/constraints.rs): direction is applied when oriented shapes are created and mutated (`Shape::orient`), and the size and region rules add a penalty to a shape's energy (`Model::energy`), which steers the search toward shapes that follow them.
 

@@ -114,9 +114,6 @@
       </label>
       <label class="check"><input type="checkbox" id="c-region"> Only paint inside a region</label>
       <div class="region-tools" id="c-region-tools" hidden>
-        <p class="hint">Paint over the original image where shapes may go, or let it find the subject.</p>
-        <button type="button" id="c-subject">Select the subject</button>
-        <p class="hint" id="c-subject-status" role="status" hidden></p>
         <label class="field">
           <span>Around the region</span>
           <select id="c-outside">
@@ -124,6 +121,23 @@
             <option value="original">The original image</option>
           </select>
         </label>
+      </div>
+      <label class="check"><input type="checkbox" id="c-detail"> Extra detail where I paint</label>
+      <div class="region-tools" id="c-detail-tools" hidden>
+        <label class="field">
+          <span>Detail strength <output id="c-detail-out">4×</output></span>
+          <input type="range" id="c-detail-boost" min="2" max="16" value="4">
+        </label>
+      </div>
+      <div class="region-tools" id="c-paint-tools" hidden>
+        <div class="row layer" id="c-layer" role="radiogroup" aria-label="What the brush paints" hidden>
+          <span>The brush paints</span>
+          <label class="check"><input type="radio" name="c-layer" value="region" checked> the region</label>
+          <label class="check"><input type="radio" name="c-layer" value="detail"> detail</label>
+        </div>
+        <p class="hint" id="c-paint-hint"></p>
+        <button type="button" id="c-subject">Select the subject</button>
+        <p class="hint" id="c-subject-status" role="status" hidden></p>
         <label class="field">
           <span>Brush size</span>
           <input type="range" id="c-brush" min="2" max="25" value="8">

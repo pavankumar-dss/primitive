@@ -231,6 +231,40 @@ fn palette() {
 }
 
 #[test]
+fn detail_area() {
+    let dir = TempDir::new("detail");
+    let input = write_input(&dir);
+    let detail = image::GrayImage::from_fn(300, 200, |x, _| {
+        image::Luma([if x < 100 { 255 } else { 0 }])
+    });
+    detail.save(dir.path("detail.png")).unwrap();
+    let out = primitive()
+        .args([
+            "-i",
+            &input,
+            "-o",
+            &dir.path("out.png"),
+            "-n",
+            "20",
+            "-r",
+            "64",
+            "-s",
+            "128",
+            "-v",
+        ])
+        .args(["-detail", &dir.path("detail.png"), "-detailboost", "6"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("20: t="));
+    assert!(std::fs::exists(dir.path("out.png")).unwrap());
+}
+
+#[test]
 fn reports_bad_arguments() {
     let out = primitive()
         .args(["-i", "x.png", "-n", "5"])

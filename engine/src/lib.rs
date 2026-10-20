@@ -163,6 +163,23 @@ pub extern "C" fn keep_outside(background: i32) -> f64 {
     })
 }
 
+/// Makes the search spend more shapes on detail in an area: a byte per
+/// working pixel in the input buffer, 255 for full detail, where errors
+/// count up to boost times as much (1 turns it off). Returns the new
+/// (weighted) score.
+#[unsafe(no_mangle)]
+pub extern "C" fn set_detail(boost: u32) -> f64 {
+    with(|e| {
+        let Some(m) = e.model.as_mut() else {
+            return 0.0;
+        };
+        let n = m.w * m.h;
+        let weights = (boost > 1).then(|| core::Weights::from_mask(&e.input[..n], boost));
+        m.set_detail(weights);
+        m.score
+    })
+}
+
 /// Sets the image renders show outside the kept region, at any size: w*h
 /// RGBA pixels followed by w*h mask bytes (255 inside the region) in the
 /// input buffer.

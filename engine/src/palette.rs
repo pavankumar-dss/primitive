@@ -188,9 +188,10 @@ mod tests {
             let error = |c: Color| {
                 let mut im = current.clone();
                 core::draw_lines(&mut im, w, c, &lines);
-                core::difference_full(&target, &im)
+                core::difference_full(&target, &im, None)
             };
-            let chosen = core::compute_color(&target, &current, w, &lines, alpha, Some(&palette));
+            let chosen =
+                core::compute_color(&target, &current, w, &lines, alpha, Some(&palette), None);
             let best = palette
                 .colors()
                 .iter()

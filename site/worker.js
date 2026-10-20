@@ -93,6 +93,7 @@ async function run(id, job) {
   const palette = job.palette || null; // every model needs the same, for replays to match
   const pixels = new Uint8Array(job.pixels);
   if (constraints && constraints.region) constraints.region = new Uint8Array(constraints.region);
+  if (constraints && constraints.detail) constraints.detail = new Uint8Array(constraints.detail);
   engine.init(pixels, width, height, outputSize, background, constraints || null, seed(), palette);
   // renders show the original around a kept region, sharper than the
   // working-size copy the engine has

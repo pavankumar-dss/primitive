@@ -1,8 +1,9 @@
 'use strict';
 
 // Constraint controls: direction (toward a spot or along an angle), shape
-// size limits, and a painted region, set by clicking and painting on the
-// original image (or by clicking a subject for segment-worker.js to find).
+// size limits, a painted region, and painted areas for extra detail, set by
+// clicking and painting on the original image (or by clicking a subject for
+// segment-worker.js to find).
 // app.js calls constraintsUI.attach() when an image loads and
 // constraintsUI.read() when a run starts; settings() and apply() carry the
 // controls in and out of share links.
@@ -18,6 +19,9 @@ const constraintsUI = (() => {
     region: $('c-region'), regionTools: $('c-region-tools'), brush: $('c-brush'),
     clear: $('c-clear'), invert: $('c-invert'), outside: $('c-outside'),
     subject: $('c-subject'), subjectStatus: $('c-subject-status'),
+    detail: $('c-detail'), detailTools: $('c-detail-tools'), detailBoost: $('c-detail-boost'),
+    detailOut: $('c-detail-out'), paintTools: $('c-paint-tools'), layer: $('c-layer'),
+    layerRadios: [...document.querySelectorAll('[name="c-layer"]')], paintHint: $('c-paint-hint'),
     tools: $('tools'), toolButtons: [...document.querySelectorAll('[data-tool]')],
   };
   const ORIENTED_MODES = ['0', '1', '5', '6', '7']; // combo, triangle, rotated rect, Bézier, rotated ellipse
@@ -26,6 +30,8 @@ const constraintsUI = (() => {
   let focus = { x: 0.5, y: 0.5 };
   let tool = null;     // 'spot', 'paint' or 'erase' while one is usable
   let mask = null;     // canvas: opaque where shapes may go
+  let detailMask = null; // canvas: opaque where detail counts more
+  let tint = null;     // scratch canvas for showing the detail areas
   let overlay = null;  // canvas shown over the original image
   let marker = null;
   let painting = false;
@@ -38,7 +44,6 @@ const constraintsUI = (() => {
   let segmenter = null;  // the worker, once someone asks for a subject
   let points = [];       // clicks so far: {x, y, include}, in fractions
   let seq = 0;           // numbers requests, so late masks are dropped
-  let inverted = false;  // Invert was pressed: found subjects become holes
 
   // ------------------------------------------------------------ controls
 
@@ -51,12 +56,20 @@ const constraintsUI = (() => {
     el.minOut.textContent = +el.min.value ? el.min.value + '%' : 'any';
     el.maxOut.textContent = +el.max.value < 100 ? el.max.value + '%' : 'any';
     el.regionTools.hidden = !el.region.checked;
+    el.detailTools.hidden = !el.detail.checked;
+    el.detailOut.textContent = el.detailBoost.value + '×';
+    const painting = el.region.checked || el.detail.checked;
+    el.paintTools.hidden = !painting;
+    el.layer.hidden = !(el.region.checked && el.detail.checked);
+    el.paintHint.textContent = layer() === 'detail'
+      ? 'Paint over the parts that need more detail, or let it find the subject.'
+      : 'Paint over the original image where shapes may go, or let it find the subject.';
 
     // offer only the tools that apply, and keep a valid one selected
     const available = [];
     if (dir === 'focus') available.push('spot');
-    if (el.region.checked && segmenter) available.push('pick', 'unpick');
-    if (el.region.checked) available.push('paint', 'erase');
+    if (painting && segmenter) available.push('pick', 'unpick');
+    if (painting) available.push('paint', 'erase');
     el.toolButtons.forEach((b) => {
       b.hidden = !available.includes(b.dataset.tool);
       b.classList.toggle('on', b.dataset.tool === tool);
@@ -64,10 +77,28 @@ const constraintsUI = (() => {
     if (!available.includes(tool)) setTool(available[0] || null);
     el.tools.hidden = available.length === 0;
 
-    const active = [dir, +el.min.value > 0 || +el.max.value < 100, el.region.checked].filter(Boolean).length;
+    const active = [dir, +el.min.value > 0 || +el.max.value < 100, el.region.checked, el.detail.checked].filter(Boolean).length;
     el.badge.textContent = active ? `${active} on` : '';
     el.badge.hidden = !active;
     draw();
+  }
+
+  // What painting, selecting, Clear and Invert change: the region or the
+  // detail areas, whichever is on, or the one chosen when both are.
+  function layer() {
+    if (el.region.checked && el.detail.checked) return el.layerRadios.find((r) => r.checked).value;
+    return el.detail.checked ? 'detail' : 'region';
+  }
+
+  function target() {
+    return layer() === 'detail' ? detailMask : mask;
+  }
+
+  // starts the subject's clicks again, as they belong to one layer
+  function newLayer() {
+    points = [];
+    seq++;
+    if (segmenter && el.subjectStatus.textContent) subjectStatus('ready');
   }
 
   function setTool(t) {
@@ -82,8 +113,19 @@ const constraintsUI = (() => {
   });
   el.region.addEventListener('change', () => {
     if (el.region.checked) setTool('paint');
+    newLayer();
     sync();
   });
+  el.detail.addEventListener('change', () => {
+    if (el.detail.checked) setTool('paint');
+    newLayer();
+    sync();
+  });
+  el.detailBoost.addEventListener('input', sync);
+  el.layerRadios.forEach((r) => r.addEventListener('change', () => {
+    newLayer();
+    sync();
+  }));
   el.min.addEventListener('input', () => {
     if (+el.min.value >= +el.max.value) el.max.value = Math.min(100, +el.min.value + 2);
     sync();
@@ -110,25 +152,25 @@ const constraintsUI = (() => {
   });
   el.clear.addEventListener('click', () => {
     if (!mask) return;
-    mask.getContext('2d').clearRect(0, 0, mask.width, mask.height);
-    points = [];
-    seq++;
-    if (segmenter) subjectStatus('ready');
+    const t = target();
+    t.getContext('2d').clearRect(0, 0, t.width, t.height);
+    newLayer();
     draw();
   });
   el.invert.addEventListener('click', () => {
     if (!mask) return;
-    inverted = !inverted;
+    const layerMask = target();
+    layerMask.inverted = !layerMask.inverted;
     const flipped = document.createElement('canvas');
-    flipped.width = mask.width;
-    flipped.height = mask.height;
+    flipped.width = layerMask.width;
+    flipped.height = layerMask.height;
     const ctx = flipped.getContext('2d');
     ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, mask.width, mask.height);
+    ctx.fillRect(0, 0, flipped.width, flipped.height);
     ctx.globalCompositeOperation = 'destination-out';
-    ctx.drawImage(mask, 0, 0);
-    const m = mask.getContext('2d');
-    m.clearRect(0, 0, mask.width, mask.height);
+    ctx.drawImage(layerMask, 0, 0);
+    const m = layerMask.getContext('2d');
+    m.clearRect(0, 0, layerMask.width, layerMask.height);
     m.drawImage(flipped, 0, 0);
     draw();
   });
@@ -172,20 +214,21 @@ const constraintsUI = (() => {
     else if (data.type === 'ready') subjectStatus(points.length ? 'selected' : 'ready');
     else if (data.type === 'error') subjectStatus('error', data.message);
     else if (data.type === 'mask' && data.seq === seq) {
-      // the found subject becomes the region (or a hole in it, inverted)
+      // the found subject fills the layer (or is a hole in it, inverted)
+      const layerMask = target();
       const canvas = new OffscreenCanvas(data.width, data.height);
       const ctx = canvas.getContext('2d');
       const img = ctx.createImageData(data.width, data.height);
       for (let i = 0; i < data.data.length; i++) {
         img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 255;
-        img.data[i * 4 + 3] = inverted ? 255 - data.data[i] : data.data[i];
+        img.data[i * 4 + 3] = layerMask.inverted ? 255 - data.data[i] : data.data[i];
       }
       ctx.putImageData(img, 0, 0);
-      const m = mask.getContext('2d');
+      const m = layerMask.getContext('2d');
       m.globalCompositeOperation = 'source-over';
-      m.clearRect(0, 0, mask.width, mask.height);
+      m.clearRect(0, 0, layerMask.width, layerMask.height);
       m.imageSmoothingQuality = 'high';
-      m.drawImage(canvas, 0, 0, mask.width, mask.height);
+      m.drawImage(canvas, 0, 0, layerMask.width, layerMask.height);
       subjectStatus('selected');
       draw();
     }
@@ -216,12 +259,17 @@ const constraintsUI = (() => {
     source = imageCanvas;
     points = [];
     seq++;
-    inverted = false;
     sendImage();
     const scale = Math.min(1, MASK_SIZE / Math.max(imageCanvas.width, imageCanvas.height));
     mask = document.createElement('canvas');
     mask.width = Math.max(1, Math.round(imageCanvas.width * scale));
     mask.height = Math.max(1, Math.round(imageCanvas.height * scale));
+    detailMask = document.createElement('canvas');
+    detailMask.width = mask.width;
+    detailMask.height = mask.height;
+    tint = document.createElement('canvas');
+    tint.width = mask.width;
+    tint.height = mask.height;
     overlay = document.createElement('canvas');
     overlay.className = 'overlay';
     overlay.width = mask.width;
@@ -314,14 +362,15 @@ const constraintsUI = (() => {
   }
 
   function paint(a, b) {
-    const ctx = mask.getContext('2d');
+    const layerMask = target();
+    const ctx = layerMask.getContext('2d');
     ctx.globalCompositeOperation = tool === 'erase' ? 'destination-out' : 'source-over';
     ctx.strokeStyle = '#fff';
     ctx.lineCap = 'round';
-    ctx.lineWidth = (+el.brush.value / 100) * Math.max(mask.width, mask.height);
+    ctx.lineWidth = (+el.brush.value / 100) * Math.max(layerMask.width, layerMask.height);
     ctx.beginPath();
-    ctx.moveTo(a.x * mask.width, a.y * mask.height);
-    ctx.lineTo(b.x * mask.width + 0.01, b.y * mask.height);
+    ctx.moveTo(a.x * layerMask.width, a.y * layerMask.height);
+    ctx.lineTo(b.x * layerMask.width + 0.01, b.y * layerMask.height);
     ctx.stroke();
   }
 
@@ -338,8 +387,20 @@ const constraintsUI = (() => {
       ctx.drawImage(mask, 0, 0);
       ctx.globalCompositeOperation = 'source-over';
     }
+    if (el.detail.checked) {
+      // tint the detail areas amber
+      const t = tint.getContext('2d');
+      t.globalCompositeOperation = 'copy';
+      t.drawImage(detailMask, 0, 0);
+      t.globalCompositeOperation = 'source-in';
+      t.fillStyle = 'rgb(255, 170, 30)';
+      t.fillRect(0, 0, tint.width, tint.height);
+      ctx.globalAlpha = 0.5;
+      ctx.drawImage(tint, 0, 0);
+      ctx.globalAlpha = 1;
+    }
     // the subject's clicks: light for Select, dark for Exclude
-    if (el.region.checked) {
+    if (el.region.checked || el.detail.checked) {
       const px = overlay.width / Math.max(1, overlay.clientWidth);
       for (const pt of points) {
         ctx.beginPath();
@@ -434,6 +495,14 @@ const constraintsUI = (() => {
       // shapes are clipped to the region, and the image around it stays
       if (el.outside.value === 'original') c.keep = true;
     }
+    if (el.detail.checked && detailMask) {
+      const detail = layerBytes(detailMask, width, height);
+      if (!detail.some((v) => v > 0)) {
+        throw new Error('Paint the parts that need more detail on the original image, or turn off “Extra detail where I paint”.');
+      }
+      c.detail = detail.buffer;
+      c.detailBoost = +el.detailBoost.value;
+    }
     return Object.keys(c).length ? c : null;
   }
 
@@ -459,7 +528,7 @@ const constraintsUI = (() => {
       moveFocus({ x: c.focus[0], y: c.focus[1] });
     } else if (Number.isFinite(c.angle)) {
       el.direction.value = 'angle';
-      el.angle.value = ((Math.round(c.angle) % 180) + 180) % 180; // the same line either way round
+      el.angle.value = ((Math.round(c.angle) % 360) + 360) % 360; // arrowheads point one way round
     }
     const min = Math.round(c.minSize * 100), max = Math.round(c.maxSize * 100);
     if (fits(el.max, max)) el.max.value = max;
@@ -471,10 +540,15 @@ const constraintsUI = (() => {
   // The painted region at width x height, smoothly scaled: a byte per
   // pixel, 255 inside. For drawing the original image around it.
   function regionMask(width, height) {
+    return layerBytes(mask, width, height);
+  }
+
+  // A layer at width x height, smoothly scaled: a byte per pixel, its alpha.
+  function layerBytes(layerMask, width, height) {
     const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(mask, 0, 0, width, height);
+    ctx.drawImage(layerMask, 0, 0, width, height);
     const rgba = ctx.getImageData(0, 0, width, height).data;
     const out = new Uint8Array(width * height);
     for (let i = 0; i < out.length; i++) out[i] = rgba[i * 4 + 3];
