@@ -9,7 +9,7 @@ const ui = {
   bgAuto: $('bg-auto'), bg: $('bg'), start: $('start'), stop: $('stop'), status: $('status'),
   progress: $('progress'), progressBar: $('progress-bar'),
   original: $('original'), result: $('result'), resultCaption: $('result-caption'),
-  dlPng: $('dl-png'), dlSvg: $('dl-svg'), replay: $('replay'), duration: $('duration'),
+  dlPng: $('dl-png'), dlSvg: $('dl-svg'), replay: $('replay'), duration: $('duration'), scrub: $('scrub'),
   exportButtons: [...document.querySelectorAll('[data-export]')], exportStatus: $('export-status'),
 };
 
@@ -31,6 +31,8 @@ let running = false;
 let lastSvg = null;
 let lastJob = null;
 let lastShapes = 0;      // shapes in the current result
+let resultLabel = 'Primitive'; // the result's caption when it shows every shape
+let visible = 0;         // shapes the preview shows, of those in its SVG
 let exporting = null;    // format of the animation being made, if any
 let lastSpeed = null;    // {mode, inputSize, threads, perSecond} measured on the last full run
 
@@ -49,8 +51,7 @@ worker.onmessage = ({ data }) => {
       if (!running) break;
       lastShapes = data.shapes;
       lastSvg = data.svg;
-      ui.result.innerHTML = data.svg;
-      fitSvg(ui.result.querySelector('svg'));
+      showResult(data.svg);
       ui.progressBar.style.width = (100 * data.done / data.count) + '%';
       setStatus(`Shape ${data.done} of ${data.count} · ${fmtTime(data.elapsed)}`
         + ` · ${(data.done / data.elapsed * 1000).toFixed(1)} shapes/s`);
@@ -63,17 +64,19 @@ worker.onmessage = ({ data }) => {
       if (data.elapsed > 2000) {
         lastSpeed = { mode: lastJob.mode, inputSize: lastJob.inputSize, threads: data.threads, perSecond: lastJob.count / data.elapsed * 1000 };
       }
-      ui.resultCaption.textContent = shapeLabel(data.shapes);
+      setResultLabel(shapeLabel(data.shapes));
       break;
     }
     case 'png':
       if (data.bytes) download(new Blob([data.bytes], { type: 'image/png' }), '.png');
       break;
+    case 'svg':
+      download(new Blob([data.data], { type: 'image/svg+xml' }), '.svg');
+      break;
     case 'export':
       exporting = null;
       if (data.purpose === 'replay') {
-        ui.result.innerHTML = data.data;
-        fitSvg(ui.result.querySelector('svg'));
+        showResult(data.data);
         setExportStatus('');
       } else {
         const blob = new Blob([data.data], { type: EXPORTS[data.format].type });
@@ -120,8 +123,9 @@ async function useBlob(blob, name) {
   canvas.height = bitmap.height;
   canvas.getContext('2d').drawImage(bitmap, 0, 0);
   constraintsUI.attach(ui.original, canvas);
+  compareUI.setImage(bitmap);
   ui.result.innerHTML = '<p class="placeholder">Press Generate</p>';
-  ui.resultCaption.textContent = 'Primitive';
+  setResultLabel('Primitive');
   lastSvg = null;
   setExportStatus('');
   setStatus(engineReady ? `Loaded ${bitmap.width}×${bitmap.height} image.` : 'Image loaded. Waiting for the engine…');
@@ -284,7 +288,7 @@ ui.form.addEventListener('submit', (e) => {
   running = true;
   ui.progress.hidden = false;
   ui.progressBar.style.width = '0';
-  ui.resultCaption.textContent = 'Primitive';
+  setResultLabel('Primitive');
   setStatus('Starting…');
   setExportStatus('');
   updateButtons();
@@ -297,7 +301,7 @@ ui.form.addEventListener('submit', (e) => {
 ui.stop.addEventListener('click', () => {
   worker.postMessage({ type: 'stop' });
   finish('Stopped.');
-  if (lastShapes) ui.resultCaption.textContent = shapeLabel(lastShapes) + ' (stopped)';
+  if (lastShapes) setResultLabel(shapeLabel(lastShapes) + ' (stopped)');
 });
 
 function finish(message, isError) {
@@ -316,18 +320,88 @@ function download(blob, suffix) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
-ui.dlSvg.addEventListener('click', () => lastSvg && download(new Blob([lastSvg], { type: 'image/svg+xml' }), '.svg'));
+ui.dlSvg.addEventListener('click', () => {
+  if (!lastSvg) return;
+  const count = exportCount();
+  if (count === null) download(new Blob([lastSvg], { type: 'image/svg+xml' }), '.svg');
+  else worker.postMessage({ type: 'svg', count });
+});
 
 function requestExport(format, purpose) {
   if (!lastSvg || running || exporting) return;
   exporting = format;
   if (purpose === 'download') setExportStatus(`Making ${EXPORTS[format].label}…`);
   updateButtons();
-  worker.postMessage({ type: 'export', format, purpose, duration: +ui.duration.value, size: lastJob.outputSize });
+  worker.postMessage({ type: 'export', format, purpose, duration: +ui.duration.value, size: lastJob.outputSize, count: exportCount() });
 }
 ui.exportButtons.forEach((b) => b.addEventListener('click', () => requestExport(b.dataset.export, 'download')));
-ui.replay.addEventListener('click', () => requestExport('svg', 'replay'));
-ui.dlPng.addEventListener('click', () => worker.postMessage({ type: 'png' }));
+ui.replay.addEventListener('click', () => {
+  // replays the whole result, so the slider goes back to the end
+  resetScrub();
+  requestExport('svg', 'replay');
+});
+ui.dlPng.addEventListener('click', () => worker.postMessage({ type: 'png', count: exportCount() }));
+
+// ---------------------------------------------------------------- shape-count slider
+
+// Downloads show the shapes the slider shows. While it is hidden (during a
+// run) they show everything so far; once shown it also pins a stopped run's
+// downloads to the shapes in its preview, as the worker may have added more
+// since the last preview.
+function exportCount() {
+  return ui.scrub.hidden ? null : +ui.scrub.value;
+}
+
+function setResultLabel(text) {
+  resultLabel = text;
+  resetScrub();
+}
+
+function resetScrub() {
+  ui.scrub.max = Math.max(1, lastShapes);
+  ui.scrub.value = ui.scrub.max;
+  showShapes(Infinity);
+  ui.resultCaption.textContent = resultLabel;
+}
+
+function showScrubbed() {
+  const k = +ui.scrub.value;
+  showShapes(k);
+  ui.resultCaption.textContent = k < +ui.scrub.max ? `${k} of ${resultLabel}` : resultLabel;
+}
+
+function showResult(svgText) {
+  ui.result.innerHTML = svgText;
+  fitSvg(ui.result.querySelector('svg'));
+  const group = ui.result.querySelector('svg > g');
+  visible = group ? group.children.length : 0;
+  if (!ui.scrub.hidden) showShapes(+ui.scrub.value);
+}
+
+// The result SVG has one element per shape, in order, in its group, so
+// hiding the ones past k shows the picture as it was after k shapes. Only
+// those between the old and new count change, which keeps dragging smooth
+// with thousands of shapes. (visibility, unlike display, doesn't restart a
+// replay's fade-in when a shape comes back.)
+function showShapes(k) {
+  const group = ui.result.querySelector('svg > g');
+  if (!group) return;
+  const shapes = group.children;
+  const end = Math.min(shapes.length, Math.max(k, visible));
+  for (let i = Math.min(k, visible); i < end; i++) shapes[i].style.visibility = i < k ? '' : 'hidden';
+  visible = k;
+}
+
+// one update per frame, however fast the input events come
+let scrubQueued = false;
+ui.scrub.addEventListener('input', () => {
+  if (scrubQueued) return;
+  scrubQueued = true;
+  requestAnimationFrame(() => {
+    scrubQueued = false;
+    showScrubbed();
+  });
+});
 
 // ---------------------------------------------------------------- ui state
 
@@ -344,6 +418,8 @@ function updateButtons() {
   const noAnim = !lastSvg || running || !!exporting;
   ui.exportButtons.forEach((b) => { b.disabled = noAnim; });
   ui.replay.disabled = noAnim;
+  ui.scrub.hidden = running || !lastSvg || lastShapes < 2;
+  compareUI.setAvailable(!!lastSvg);
 }
 
 // The engine's SVG has a fixed width/height and no viewBox; add one so CSS can scale it.

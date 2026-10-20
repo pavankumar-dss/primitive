@@ -181,46 +181,57 @@ fn output(e: &mut Engine, bytes: Vec<u8>) -> usize {
     e.output.len()
 }
 
-/// Writes the model as an SVG document to output_ptr and returns its length.
+/// Writes the model's first count shapes as an SVG document to output_ptr
+/// and returns its length.
 #[unsafe(no_mangle)]
-pub extern "C" fn svg() -> usize {
+pub extern "C" fn svg(count: usize) -> usize {
     with(|e| {
-        let s = e.model.as_ref().map(|m| m.svg()).unwrap_or_default();
+        let s = e
+            .model
+            .as_ref()
+            .map(|m| m.svg_first(count))
+            .unwrap_or_default();
         output(e, s.into_bytes())
     })
 }
 
 /// Like svg, but the shapes fade in over duration seconds.
 #[unsafe(no_mangle)]
-pub extern "C" fn animated_svg(duration: f64) -> usize {
+pub extern "C" fn animated_svg(duration: f64, count: usize) -> usize {
     with(|e| {
         let s = e
             .model
             .as_ref()
-            .map(|m| m.animated_svg(duration))
+            .map(|m| m.animated_svg(duration, count))
             .unwrap_or_default();
         output(e, s.into_bytes())
     })
 }
 
-/// Writes an animated GIF to output_ptr and returns its length; delays are
-/// in hundredths of a second.
+/// Writes an animated GIF of the first count shapes to output_ptr and
+/// returns its length; delays are in hundredths of a second.
 #[unsafe(no_mangle)]
-pub extern "C" fn gif(max_side: usize, frames: usize, delay: u32, last_delay: u32) -> usize {
+pub extern "C" fn gif(
+    max_side: usize,
+    frames: usize,
+    delay: u32,
+    last_delay: u32,
+    count: usize,
+) -> usize {
     with(|e| {
         let bytes = match &e.model {
-            Some(m) => gif::encode(m, max_side, frames, delay as u16, last_delay as u16),
+            Some(m) => gif::encode(m, count, max_side, frames, delay as u16, last_delay as u16),
             None => vec![],
         };
         output(e, bytes)
     })
 }
 
-/// Prepares to render frames fitting within max_side x max_side (0 for the
-/// output size), rounded to even dimensions if even is set, and returns
-/// width << 16 | height.
+/// Prepares to render frames of the first count shapes appearing, fitting
+/// within max_side x max_side (0 for the output size), rounded to even
+/// dimensions if even is set, and returns width << 16 | height.
 #[unsafe(no_mangle)]
-pub extern "C" fn anim_start(max_side: usize, frames: usize, even: u32) -> u32 {
+pub extern "C" fn anim_start(max_side: usize, frames: usize, even: u32, count: usize) -> u32 {
     with(|e| {
         let Some(m) = &e.model else { return 0 };
         let side = if max_side == 0 {
@@ -230,7 +241,7 @@ pub extern "C" fn anim_start(max_side: usize, frames: usize, even: u32) -> u32 {
         };
         let a = Animator::new(m, side, even != 0);
         let size = (a.width as u32) << 16 | a.height as u32;
-        e.counts = m.animation_counts(frames);
+        e.counts = m.animation_counts(frames, count);
         e.animator = Some(a);
         size
     })

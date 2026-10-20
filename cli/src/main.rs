@@ -175,10 +175,11 @@ fn run(args: &Args) -> Result<(), String> {
                         .write_all(model.svg().as_bytes())
                         .map_err(|e| e.to_string()),
                     "svg" => std::fs::write(&path, model.svg()).map_err(|e| e.to_string()),
-                    "gif" => {
-                        std::fs::write(&path, gif::encode(model, args.output_size, 100, 6, 250))
-                            .map_err(|e| e.to_string())
-                    }
+                    "gif" => std::fs::write(
+                        &path,
+                        gif::encode(model, model.shapes.len(), args.output_size, 100, 6, 250),
+                    )
+                    .map_err(|e| e.to_string()),
                     _ => Err(format!("unrecognized file extension: .{ext}")),
                 };
                 written.map_err(|e| format!("writing {path}: {e}"))?;

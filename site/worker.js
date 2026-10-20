@@ -141,10 +141,13 @@ onmessage = async ({ data }) => {
       runId++;
       break;
     case 'png': {
-      const bytes = await engine.png();
+      const bytes = await engine.png(data.count);
       postMessage({ type: 'png', bytes }, bytes ? [bytes.buffer] : []);
       break;
     }
+    case 'svg':
+      postMessage({ type: 'svg', data: engine.svg(data.count) });
+      break;
     case 'export':
       try {
         await exportAnimation(data);
@@ -161,23 +164,24 @@ const GIF_FPS = 15;
 const VIDEO_FPS = 30;
 const HOLD_SECONDS = 2.5; // how long the finished image stays at the end
 
-async function exportAnimation({ format, duration, size, purpose }) {
+// count, if set, ends the animation at that many shapes.
+async function exportAnimation({ format, duration, size, purpose, count }) {
   if (format === 'svg') {
-    postMessage({ type: 'export', format, purpose, data: engine.animatedSVG(duration) });
+    postMessage({ type: 'export', format, purpose, data: engine.animatedSVG(duration, count) });
   } else if (format === 'gif') {
     const delay = Math.round(100 / GIF_FPS);
-    const bytes = engine.gif(Math.min(size, 512), Math.round(duration * GIF_FPS), delay, HOLD_SECONDS * 100);
+    const bytes = engine.gif(Math.min(size, 512), Math.round(duration * GIF_FPS), delay, HOLD_SECONDS * 100, count);
     postMessage({ type: 'export', format, purpose, data: bytes }, [bytes.buffer]);
   } else if (format === 'mp4') {
-    const bytes = await encodeVideo(duration, size);
+    const bytes = await encodeVideo(duration, size, count);
     postMessage({ type: 'export', format, purpose, data: bytes }, [bytes.buffer]);
   }
 }
 
-async function encodeVideo(duration, size) {
+async function encodeVideo(duration, size, count) {
   const mb = await import('./vendor/mediabunny.min.mjs');
   const frames = Math.round(duration * VIDEO_FPS);
-  const { width, height } = engine.animStart(size, frames);
+  const { width, height } = engine.animStart(size, frames, count);
   const codec = await mb.getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], { width, height });
   if (!codec) throw new Error('This browser cannot encode video. Try a recent Chrome, Edge or Safari.');
 
