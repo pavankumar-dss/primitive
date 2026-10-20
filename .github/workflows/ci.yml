@@ -19,6 +19,20 @@ jobs:
       - run: go test ./...
       - run: GOOS=js GOARCH=wasm go vet ./...
 
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable && rustup default stable
+      - run: rustup target add wasm32-unknown-unknown && rustup component add rustfmt clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --release -- -D warnings
+      - run: cargo test --release
+      - run: cargo build --release --target wasm32-unknown-unknown
+
   python:
     runs-on: ubuntu-latest
     strategy:

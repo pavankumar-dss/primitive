@@ -1,0 +1,3 @@
+# Every browser the site supports has WebAssembly SIMD.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

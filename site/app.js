@@ -36,13 +36,16 @@ let lastSpeed = null;    // {mode, inputSize, threads, perSecond} measured on th
 
 // ---------------------------------------------------------------- worker
 
-const worker = new Worker('worker.js');
+// ?engine=go runs the original Go code instead of the Rust port, to compare
+const engineParam = new URLSearchParams(location.search).get('engine') === 'go' ? '?engine=go' : '';
+const worker = new Worker('worker.js' + engineParam);
 worker.onmessage = ({ data }) => {
   switch (data.type) {
     case 'ready':
       engineReady = true;
       setupThreads(data.maxThreads);
-      setStatus(source ? 'Ready.' : 'Ready. Choose an image to start.');
+      setStatus((source ? 'Ready.' : 'Ready. Choose an image to start.')
+        + (data.engine === 'go' ? ' (Using the original Go engine, for comparison.)' : ''));
       updateButtons();
       break;
     case 'progress':
@@ -381,7 +384,6 @@ function setupThreads(maxThreads) {
     if (n > Math.min(maxThreads, cores)) break;
     ui.threads.add(new Option(n === 1 ? '1 (no parallel search)' : String(n), String(n)));
   }
-  ui.threads.disabled = maxThreads === 1;
   worker.postMessage({ type: 'prepare', threads: autoThreads });
 }
 

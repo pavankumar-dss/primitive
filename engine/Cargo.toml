@@ -1,0 +1,16 @@
+[package]
+name = "primitive-engine"
+version = "0.1.0"
+edition = "2024"
+description = "The primitive algorithm in Rust, compiled to WebAssembly for the browser version"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

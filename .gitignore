@@ -5,6 +5,8 @@
 
 # browser build output (see scripts/build-site.sh)
 /site/primitive.wasm
+/site/engine.wasm
+/engine/target/
 /site/wasm_exec.js
 /site/examples/
 /site/vendor/

@@ -1,20 +1,19 @@
-// Runs the Go primitive model (compiled to WebAssembly) off the main thread.
-// This worker's model only follows along, for previews and exports: the
-// search for each shape is spread over a pool of search workers
-// (search-worker.js), each with its own copy of the model.
-importScripts('wasm_exec.js');
+// Runs the primitive engine (see engine.js) off the main thread. This
+// worker's model only follows along, for previews and exports: the search
+// for each shape is spread over a pool of search workers (search-worker.js),
+// each with its own copy of the model.
+importScripts('engine.js');
 
-const go = new Go();
-const compiled = WebAssembly.compileStreaming(fetch('primitive.wasm'));
+let engine = null;
 let wasmModule = null;
-const ready = compiled
+const ready = WebAssembly.compileStreaming(fetch(ENGINE_FILE))
   .then((module) => {
     wasmModule = module;
-    return WebAssembly.instantiate(module, go.importObject);
+    return loadEngine(module);
   })
-  .then((instance) => {
-    go.run(instance);
-    postMessage({ type: 'ready', maxThreads: canSpawn ? MAX_THREADS : 1 });
+  .then((e) => {
+    engine = e;
+    postMessage({ type: 'ready', maxThreads: MAX_THREADS, engine: ENGINE });
   })
   .catch((err) => postMessage({ type: 'error', message: 'Could not load the WebAssembly module: ' + err.message }));
 
@@ -22,12 +21,13 @@ const ready = compiled
 
 const SEARCHES = 16;   // independent searches per shape, as in the Go CLI
 const MAX_THREADS = SEARCHES;
-// Older Safari can't start workers from a worker; then everything runs here.
-const canSpawn = typeof Worker === 'function';
 const pool = [];
 
 function spawn() {
-  const worker = new Worker('search-worker.js');
+  if (typeof Worker !== 'function') {
+    throw new Error('This browser cannot start workers from a worker. Try a recent Chrome, Edge, Firefox or Safari.');
+  }
+  const worker = new Worker('search-worker.js' + location.search);
   const pending = [];
   worker.onmessage = ({ data }) => {
     const p = pending.shift();
@@ -67,9 +67,8 @@ async function step(id, searchers, mode, alpha, repeat) {
   energies.forEach((e, k) => { if (e < energies[best]) best = k; });
   const shapes = await searchers[best].call({ type: 'commit', repeat });
   if (id !== runId) return null;
-  if (!shapes.length) return primitiveApply([]);
-  searchers.forEach((s, k) => { if (k !== best) s.send({ type: 'apply', shapes }); });
-  return primitiveApply(shapes);
+  if (shapes.length) searchers.forEach((s, k) => { if (k !== best) s.send({ type: 'apply', shapes }); });
+  return engine.apply(shapes);
 }
 
 const seed = () => crypto.getRandomValues(new Uint32Array(1))[0];
@@ -89,19 +88,16 @@ const nextTick = () => new Promise((resolve) => {
 });
 
 async function run(id, job) {
-  if (typeof primitiveInit !== 'function') return; // load failed; already reported
+  if (!engine) return; // load failed; already reported
   const { width, height, mode, count, alpha, repeat, outputSize, background, constraints } = job;
   const pixels = new Uint8Array(job.pixels);
   if (constraints && constraints.region) constraints.region = new Uint8Array(constraints.region);
-  primitiveInit(pixels, width, height, outputSize, background, constraints || null, seed());
+  engine.init(pixels, width, height, outputSize, background, constraints || null, seed());
 
-  const threads = canSpawn ? Math.max(1, Math.min(MAX_THREADS, job.threads || 1)) : 1;
-  const searchers = [];
-  if (threads > 1) {
-    while (pool.length < threads) pool.push(spawn());
-    searchers.push(...pool.slice(0, threads));
-    for (const s of searchers) s.send({ type: 'init', pixels, width, height, background, constraints: constraints || null, seed: seed() });
-  }
+  const threads = Math.max(1, Math.min(MAX_THREADS, job.threads || 1));
+  while (pool.length < threads) pool.push(spawn());
+  const searchers = pool.slice(0, threads);
+  for (const s of searchers) s.send({ type: 'init', pixels, width, height, background, constraints: constraints || null, seed: seed() });
 
   const start = performance.now();
   let lastPost = 0;
@@ -109,19 +105,15 @@ async function run(id, job) {
   for (let i = 1; i <= count; i++) {
     await nextTick();
     if (id !== runId) return;
-    if (threads === 1) {
-      score = primitiveStep(mode, alpha, repeat);
-    } else {
-      score = await step(id, searchers, mode, alpha, repeat);
-      if (id !== runId) return;
-    }
+    score = await step(id, searchers, mode, alpha, repeat);
+    if (id !== runId) return;
     const now = performance.now();
-    if (i === count || now - lastPost > 150 + primitiveShapes() / 10) {
+    if (i === count || now - lastPost > 150 + engine.shapes() / 10) {
       lastPost = now;
-      postMessage({ type: 'progress', done: i, count, shapes: primitiveShapes(), score, elapsed: now - start, svg: primitiveSVG() });
+      postMessage({ type: 'progress', done: i, count, shapes: engine.shapes(), score, elapsed: now - start, svg: engine.svg() });
     }
   }
-  postMessage({ type: 'done', score, shapes: primitiveShapes(), elapsed: performance.now() - start, threads });
+  postMessage({ type: 'done', score, shapes: engine.shapes(), elapsed: performance.now() - start, threads });
 }
 
 onmessage = async ({ data }) => {
@@ -139,13 +131,17 @@ onmessage = async ({ data }) => {
     case 'prepare':
       // start the search workers early so the first run doesn't wait for them
       await ready;
-      if (canSpawn) while (pool.length < Math.min(MAX_THREADS, data.threads)) pool.push(spawn());
+      try {
+        while (pool.length < Math.min(MAX_THREADS, data.threads)) pool.push(spawn());
+      } catch {
+        // reported when a run starts
+      }
       break;
     case 'stop':
       runId++;
       break;
     case 'png': {
-      const bytes = primitivePNG();
+      const bytes = await engine.png();
       postMessage({ type: 'png', bytes }, bytes ? [bytes.buffer] : []);
       break;
     }
@@ -167,10 +163,10 @@ const HOLD_SECONDS = 2.5; // how long the finished image stays at the end
 
 async function exportAnimation({ format, duration, size, purpose }) {
   if (format === 'svg') {
-    postMessage({ type: 'export', format, purpose, data: primitiveAnimatedSVG(duration) });
+    postMessage({ type: 'export', format, purpose, data: engine.animatedSVG(duration) });
   } else if (format === 'gif') {
     const delay = Math.round(100 / GIF_FPS);
-    const bytes = primitiveGIF(Math.min(size, 512), Math.round(duration * GIF_FPS), delay, HOLD_SECONDS * 100);
+    const bytes = engine.gif(Math.min(size, 512), Math.round(duration * GIF_FPS), delay, HOLD_SECONDS * 100);
     postMessage({ type: 'export', format, purpose, data: bytes }, [bytes.buffer]);
   } else if (format === 'mp4') {
     const bytes = await encodeVideo(duration, size);
@@ -181,7 +177,7 @@ async function exportAnimation({ format, duration, size, purpose }) {
 async function encodeVideo(duration, size) {
   const mb = await import('./vendor/mediabunny.min.mjs');
   const frames = Math.round(duration * VIDEO_FPS);
-  const { width, height } = primitiveAnimStart(size, frames);
+  const { width, height } = engine.animStart(size, frames);
   const codec = await mb.getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], { width, height });
   if (!codec) throw new Error('This browser cannot encode video. Try a recent Chrome, Edge or Safari.');
 
@@ -191,7 +187,7 @@ async function encodeVideo(duration, size) {
   await output.start();
   for (let k = 0; k < frames; k++) {
     const last = k === frames - 1;
-    const sample = new mb.VideoSample(primitiveAnimFrame(k), {
+    const sample = new mb.VideoSample(engine.animFrame(k), {
       format: 'RGBA',
       codedWidth: width,
       codedHeight: height,

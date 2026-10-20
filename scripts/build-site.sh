@@ -3,6 +3,12 @@
 # Serve it locally with: python3 -m http.server -d site
 set -e
 cd "$(dirname "$0")/.."
+
+# the engine: the Rust port (needs rustup target add wasm32-unknown-unknown)
+(cd engine && cargo build --release --target wasm32-unknown-unknown)
+cp engine/target/wasm32-unknown-unknown/release/primitive_engine.wasm site/engine.wasm
+
+# the original Go code, still selectable with ?engine=go for comparison
 GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o site/primitive.wasm ./cmd/wasm
 cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/
 mkdir -p site/examples
