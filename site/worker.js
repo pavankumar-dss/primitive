@@ -93,6 +93,9 @@ async function run(id, job) {
   const pixels = new Uint8Array(job.pixels);
   if (constraints && constraints.region) constraints.region = new Uint8Array(constraints.region);
   engine.init(pixels, width, height, outputSize, background, constraints || null, seed());
+  // renders show the original around a kept region, sharper than the
+  // working-size copy the engine has
+  if (job.base) engine.setBase(new Uint8Array(job.base.pixels), job.base.mask, job.base.width, job.base.height);
 
   const threads = Math.max(1, Math.min(MAX_THREADS, job.threads || 1));
   while (pool.length < threads) pool.push(spawn());
