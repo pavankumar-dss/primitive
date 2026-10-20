@@ -39,6 +39,8 @@ pub struct Model {
     target: Vec<u8>,
     current: Vec<u8>,
     pub score: f64,
+    /// how many candidate shapes have been scored, for speed reports
+    pub evaluations: u64,
     pub shapes: Vec<Shape>,
     pub colors: Vec<Color>,
     constraints: Option<Constraints>,
@@ -90,6 +92,7 @@ impl Model {
             target,
             current,
             score,
+            evaluations: 0,
             shapes: vec![],
             colors: vec![],
             constraints: None,
@@ -119,6 +122,7 @@ impl Model {
         if let Some(e) = state.energy {
             return e;
         }
+        self.evaluations += 1;
         let (w, h) = (self.w, self.h);
         let wk = &mut self.worker;
         state

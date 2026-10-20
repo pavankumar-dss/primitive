@@ -6,6 +6,9 @@ on:
     paths:
       - "site/**"
       - "engine/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/**"
       - "examples/**"
       - "scripts/build-site.sh"
       - ".github/workflows/pages.yml"

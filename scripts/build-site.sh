@@ -4,9 +4,9 @@
 set -e
 cd "$(dirname "$0")/.."
 
-# the engine: the Rust port (needs rustup target add wasm32-unknown-unknown)
-(cd engine && cargo build --release --target wasm32-unknown-unknown)
-cp engine/target/wasm32-unknown-unknown/release/primitive_engine.wasm site/engine.wasm
+# the engine (needs rustup target add wasm32-unknown-unknown)
+cargo build --release --target wasm32-unknown-unknown -p primitive-engine
+cp target/wasm32-unknown-unknown/release/primitive_engine.wasm site/engine.wasm
 
 mkdir -p site/examples
 cp examples/*.png site/examples/

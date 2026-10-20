@@ -1,0 +1,11 @@
+[package]
+name = "primitive"
+version = "0.2.0"
+edition = "2024"
+description = "Reproduces images with geometric primitives"
+license = "MIT"
+publish = false
+
+[dependencies]
+primitive-engine = { path = "../engine" }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }

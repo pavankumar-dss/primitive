@@ -14,7 +14,7 @@ https://pavankumar-dss.github.io/primitive/
 
 Upload an image (or paste a link to one, including Pinterest pins) and watch it being rebuilt shape by shape. Download the result as PNG or SVG, or as an animation of the shapes being added: GIF, MP4 video or animated SVG. Everything runs locally in your browser, spread over all your CPU cores, so uploaded images never leave your device.
 
-The site runs a Rust port of the algorithm ([`engine/`](engine)), compiled to WebAssembly, which is two to three times faster there than the Go code compiled the same way.
+The site runs a Rust port of the algorithm ([`engine/`](engine)), compiled to WebAssembly, which is two to three times faster there than the Go code compiled the same way. The port also fixes how the original searched some shapes (triangles, rectangles, polygons, curves): it scored them on slightly different pixels than it drew, so results now come out 10-20% closer to the input.
 
 To run the site locally, with [Rust](https://rustup.rs/) installed:
 
@@ -24,14 +24,16 @@ To run the site locally, with [Rust](https://rustup.rs/) installed:
 
 ### Command-line Usage
 
-Run it on your own images! First, [install Go](https://go.dev/doc/install) (1.26 or newer).
+Run it on your own images! First, [install Rust](https://rustup.rs/), then:
 
-    go install github.com/pavankumar-dss/primitive@latest
+    cargo install --git https://github.com/pavankumar-dss/primitive primitive
     primitive -i input.png -o output.png -n 100
 
-Or build from a clone of this repository:
+Or build from a clone of this repository, which puts it in `target/release/`:
 
-    go build -o primitive .
+    cargo build --release -p primitive
+
+The command-line tool ([`cli/`](cli)) uses the same engine as the site, spread over all CPU cores. It reads PNG, JPEG, GIF, WebP and BMP images.
 
 Small input images should be used (like 256x256px). You don't need the detail anyway and the code will run faster.
 
@@ -47,7 +49,7 @@ Small input images should be used (like 256x256px). You don't need the detail an
 | `s` | 1024 | output image size |
 | `a` | 128 | color alpha (use `0` to let the algorithm choose alpha for each shape) |
 | `bg` | avg | starting background color (hex) |
-| `j` | 0 | number of parallel workers (default uses all cores) |
+| `j` | 0 | number of parallel workers (default uses all cores, up to 16) |
 | `focus` | off | point oriented shapes toward `x,y` (fractions of width and height, e.g. `0.6,0.7`) |
 | `angle` | off | point oriented shapes along this angle (degrees counterclockwise from horizontal) |
 | `minsize` | 0 | smallest shape, as a fraction of the image's longest side (`0` = no limit) |

@@ -5,6 +5,6 @@
 
 # browser build output (see scripts/build-site.sh)
 /site/engine.wasm
-/engine/target/
+/target/
 /site/examples/
 /site/vendor/
