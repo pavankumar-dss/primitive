@@ -304,18 +304,22 @@ impl Model {
         self.energy(state)
     }
 
+    /// Whether shape may be added: it covers some pixels (it may not, when
+    /// clipped to a region, and would then be picked whenever no shape
+    /// improves the picture) and keeps to the constraints.
     fn allowed(&mut self, shape: &Shape) -> bool {
-        if self.constraints.is_none() {
-            return true;
-        }
         self.rasterize(shape);
-        let c = self.constraints.as_ref().unwrap();
-        c.violation(&self.worker.lines, self.w) == 0.0
+        let lines = &self.worker.lines;
+        !lines.is_empty()
+            && self
+                .constraints
+                .as_ref()
+                .is_none_or(|c| c.violation(lines, self.w) == 0.0)
     }
 
     /// Adds the shape in state, found by a search, followed by up to repeat
     /// more shapes found by hill climbing from it. Returns the states added,
-    /// which is none if the shape breaks the constraints.
+    /// which is none if the shape covers nothing or breaks the constraints.
     pub fn commit(&mut self, mut state: State, repeat: i32) -> Vec<State> {
         if !self.allowed(&state.shape) {
             // no shape satisfying the constraints was found this time
@@ -603,6 +607,43 @@ mod tests {
             follower.add(*s, c.a);
         }
         assert!(follower.current == m.current);
+    }
+
+    #[test]
+    fn keep_outside_with_a_palette() {
+        let mut m = test_model(8);
+        let palette = Palette::new(vec![
+            Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            Color {
+                r: 0,
+                g: 0,
+                b: 255,
+                a: 255,
+            },
+        ]);
+        m.set_palette(palette.clone());
+        m.keep_outside(&disc(&m), None);
+        // the region starts as the palette color nearest its average
+        let colors = palette.unwrap().colors().to_vec();
+        assert!(
+            colors
+                .iter()
+                .any(|c| (c.r, c.g, c.b) == (m.background.r, m.background.g, m.background.b))
+        );
+        for _ in 0..4 {
+            let s = m.search(ShapeType::Ellipse, 128, 1);
+            m.commit(s, 0);
+        }
+        assert!(
+            m.colors
+                .iter()
+                .all(|c| colors.iter().any(|p| (p.r, p.g, p.b) == (c.r, c.g, c.b)))
+        );
     }
 
     #[test]
