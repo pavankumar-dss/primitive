@@ -1,5 +1,4 @@
-//! Restrictions on the shapes the search may choose (see Constraints in the
-//! Go package, which this mirrors).
+//! Restrictions on the shapes the search may choose.
 
 use crate::core::Scanline;
 

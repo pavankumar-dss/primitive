@@ -19,7 +19,7 @@ const ready = WebAssembly.compileStreaming(fetch(ENGINE_FILE))
 
 // ---------------------------------------------------------------- search pool
 
-const SEARCHES = 16;   // independent searches per shape, as in the Go CLI
+const SEARCHES = 16;   // independent searches per shape, as in the command-line tool
 const MAX_THREADS = SEARCHES;
 const pool = [];
 

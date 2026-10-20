@@ -1,5 +1,4 @@
-//! Animated GIFs of shapes being added (see EncodeGIF in the Go package):
-//! a median-cut palette from the finished image, and only the changed
+//! Animated GIFs of shapes being added: a median-cut palette from the finished image, and only the changed
 //! region of each frame, with unchanged pixels transparent.
 
 use crate::model::Model;

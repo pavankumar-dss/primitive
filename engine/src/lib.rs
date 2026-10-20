@@ -1,6 +1,7 @@
 //! The primitive algorithm (github.com/fogleman/primitive), ported from Go
-//! to Rust for the browser version: compiled to WebAssembly, it runs the
-//! search several times faster than the Go code compiled to WebAssembly.
+//! to Rust. Compiled to WebAssembly it runs the browser version, several
+//! times faster than the Go code compiled to WebAssembly did, and as a
+//! library it runs the command-line tool (../cli).
 //!
 //! The exported functions below are the WebAssembly interface; site/engine.js
 //! wraps them. Inputs (pixels, regions, shapes) go through a buffer from

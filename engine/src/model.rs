@@ -1,6 +1,6 @@
 //! The model: the target image, the picture built so far, and the search
 //! for the next shape, ported from model.go, worker.go, state.go and
-//! optimize.go in the Go package.
+//! optimize.go in the original Go package.
 
 use crate::constraints::Constraints;
 use crate::core::{self, Color, Scanline};

@@ -14,13 +14,7 @@ https://pavankumar-dss.github.io/primitive/
 
 Upload an image (or paste a link to one, including Pinterest pins) and watch it being rebuilt shape by shape. Download the result as PNG or SVG, or as an animation of the shapes being added: GIF, MP4 video or animated SVG. Everything runs locally in your browser, spread over all your CPU cores, so uploaded images never leave your device.
 
-The site runs a Rust port of the algorithm ([`engine/`](engine)), compiled to WebAssembly, which is two to three times faster there than the Go code compiled the same way. The port also fixes how the original searched some shapes (triangles, rectangles, polygons, curves): it scored them on slightly different pixels than it drew, so results now come out 10-20% closer to the input.
-
-To run the site locally, with [Rust](https://rustup.rs/) installed:
-
-    rustup target add wasm32-unknown-unknown
-    sh scripts/build-site.sh
-    python3 -m http.server -d site
+This fork is written in Rust: a port of [Michael Fogleman's original Go code](https://github.com/fogleman/primitive), compiled to WebAssembly for the site, where it runs two to three times faster than the Go code did. The port also fixes how the original searched some shapes (triangles, rectangles, polygons, curves): it scored them on slightly different pixels than it drew, so results come out 10-20% closer to the input.
 
 ### Command-line Usage
 
@@ -29,11 +23,7 @@ Run it on your own images! First, [install Rust](https://rustup.rs/), then:
     cargo install --git https://github.com/pavankumar-dss/primitive primitive
     primitive -i input.png -o output.png -n 100
 
-Or build from a clone of this repository, which puts it in `target/release/`:
-
-    cargo build --release -p primitive
-
-The command-line tool ([`cli/`](cli)) uses the same engine as the site, spread over all CPU cores. It reads PNG, JPEG, GIF, WebP and BMP images.
+The command-line tool uses the same engine as the site, spread over all CPU cores. It reads PNG, JPEG, GIF, WebP and BMP images.
 
 Small input images should be used (like 256x256px). You don't need the detail anyway and the code will run faster.
 
@@ -57,6 +47,25 @@ Small input images should be used (like 256x256px). You don't need the detail an
 | `region` | off | image whose white areas are the only places shapes may go |
 | `v` | off | verbose output |
 | `vv` | off | very verbose output |
+
+### Building from Source
+
+With [Rust](https://rustup.rs/) installed, from a clone of this repository:
+
+    cargo build --release -p primitive    # the command-line tool, in target/release/
+    cargo test --workspace                # all tests
+
+To build and run the website locally:
+
+    rustup target add wasm32-unknown-unknown
+    sh scripts/build-site.sh
+    python3 -m http.server -d site        # then open http://localhost:8000
+
+The repository is a Cargo workspace:
+
+- [`engine/`](engine): the algorithm, with no dependencies. It compiles to WebAssembly for the site (exports in `lib.rs`) and is a library for the command-line tool.
+- [`cli/`](cli): the command-line tool.
+- [`site/`](site): the website (plain HTML, CSS and JavaScript, no build step). `scripts/build-site.sh` adds the compiled engine, the example images and a vendored MP4 muxer, and GitHub Pages deploys it on every push to `master`.
 
 ### Output Formats
 
@@ -99,7 +108,7 @@ Available constraints, on the command line and on the website (under "Constraint
 - **Size** (`-minsize`, `-maxsize`): only small shapes for a mosaic look, or only large ones for bolder abstraction.
 - **Region** (`-region mask.png`): shapes only go where the mask is white (up to 10% of a shape may spill over); everything else stays the background color. On the website you paint the region onto the image.
 
-To invent your own, see `primitive/constraints.go`: direction is applied in each oriented shape's `Mutate()`, and the size and region rules add a penalty in `Worker.Energy`, which steers the search toward shapes that follow them.
+To invent your own, see [`engine/src/constraints.rs`](engine/src/constraints.rs): direction is applied when oriented shapes are created and mutated (`Shape::orient`), and the size and region rules add a penalty to a shape's energy (`Model::energy`), which steers the search toward shapes that follow them.
 
 ### Shape and Iteration Comparison Matrix
 
@@ -127,24 +136,17 @@ The following primitives are supported:
 - Ellipse (axis-aligned)
 - Circle
 - Rotated Rectangle
-- Combo (a mix of the above in a single image)
+- Bézier curve (quadratic)
+- Rotated Ellipse
+- Polygon (four points)
+- Combo (a mix of all of the above in a single image)
 
-More shapes can be added by implementing the following interface:
-
-```go
-type Shape interface {
-	Rasterize() []Scanline
-	Copy() Shape
-	Mutate()
-	Draw(dc *gg.Context)
-	SVG(attrs string) string
-}
-```
+More shapes can be added as variants of `Shape` in [`engine/src/shape.rs`](engine/src/shape.rs), with ways to create one at random, mutate it, rasterize it for the search (the pixels it covers), outline it for rendering, and write it as SVG.
 
 ### Features
 
 - [Hill Climbing](https://en.wikipedia.org/wiki/Hill_climbing) or [Simulated Annealing](https://en.wikipedia.org/wiki/Simulated_annealing) for optimization (hill climbing multiple random shapes is nearly as good as annealing and faster)
-- Scanline rasterization of shapes in pure Go (preferable for implementing the features below)
+- Scanline rasterization of shapes, matching exactly the pixels the anti-aliased output draws
 - Optimal color computation based on affected pixels for each shape (color is directly computed, not optimized for)
 - Partial image difference for faster scoring (only pixels that change need be considered)
 - Anti-aliased output rendering

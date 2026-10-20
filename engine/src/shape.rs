@@ -1,6 +1,6 @@
-//! The shapes, ported from the Go package: random creation, mutation,
-//! rasterizing at working resolution, outlines for rendering at any size,
-//! SVG, and the numeric encoding shared with the Go version.
+//! The shapes, ported from the original Go package: random creation,
+//! mutation, rasterizing at working resolution, outlines for rendering at
+//! any size, SVG, and a numeric encoding for passing shapes between models.
 
 use crate::constraints::{Constraints, MIN_ORIENTED_ASPECT};
 use crate::core::Scanline;
