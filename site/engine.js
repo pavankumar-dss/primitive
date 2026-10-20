@@ -6,10 +6,13 @@
 //   search(mode, alpha, searches, fresh) → energy of the best shape so far
 //   commit(repeat)   → the shapes added (opaque, with a length), for apply
 //   apply(shapes)    → new score
-//   shapes(), svg(), animatedSVG(duration)
-//   png()            → Promise of PNG bytes at the output size
-//   gif(maxSide, frames, delay, lastDelay) → GIF bytes
-//   animStart(maxSide, frames) → {width, height}; animFrame(k) → RGBA bytes
+//   shapes(), svg(count), animatedSVG(duration, count)
+//   png(count)       → Promise of PNG bytes at the output size
+//   gif(maxSide, frames, delay, lastDelay, count) → GIF bytes
+//   animStart(maxSide, frames, count) → {width, height}; animFrame(k) → RGBA bytes
+//
+// count limits the picture or animation to the first count shapes, as the
+// shape-count slider shows it; leave it out (or null) for all of them.
 
 const ENGINE_FILE = 'engine.wasm';
 
@@ -19,6 +22,7 @@ async function loadEngine(module) {
   const put = (data) => bytes(x.input_buffer(data.byteLength), data.byteLength).set(data);
   const text = (len) => new TextDecoder().decode(bytes(x.output_ptr(), len));
   let frameSize = 0;
+  const all = (count) => count ?? x.shape_count();
   return {
     init(pixels, width, height, outputSize, background, constraints, seed) {
       put(pixels);
@@ -41,21 +45,21 @@ async function loadEngine(module) {
       return x.apply(shapes.length);
     },
     shapes: () => x.shape_count(),
-    svg: () => text(x.svg()),
-    animatedSVG: (duration) => text(x.animated_svg(duration)),
-    gif(maxSide, frames, delay, lastDelay) {
-      const n = x.gif(maxSide, frames, delay, lastDelay); // replaces the output buffer
+    svg: (count) => text(x.svg(all(count))),
+    animatedSVG: (duration, count) => text(x.animated_svg(duration, all(count))),
+    gif(maxSide, frames, delay, lastDelay, count) {
+      const n = x.gif(maxSide, frames, delay, lastDelay, all(count)); // replaces the output buffer
       return bytes(x.output_ptr(), n).slice();
     },
-    animStart(maxSide, frames) {
-      const size = x.anim_start(maxSide, frames, 1);
+    animStart(maxSide, frames, count) {
+      const size = x.anim_start(maxSide, frames, 1, all(count));
       const width = size >>> 16, height = size & 0xffff;
       frameSize = width * height * 4;
       return { width, height };
     },
     animFrame: (k) => bytes(x.anim_frame(k), frameSize).slice(),
-    async png() {
-      const size = x.anim_start(0, 1, 0);
+    async png(count) {
+      const size = x.anim_start(0, 1, 0, all(count));
       const width = size >>> 16, height = size & 0xffff;
       const pixels = new Uint8ClampedArray(bytes(x.anim_frame(0), width * height * 4));
       const canvas = new OffscreenCanvas(width, height);
