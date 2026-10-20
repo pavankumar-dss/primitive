@@ -170,8 +170,13 @@
     <div class="actions">
       <button type="submit" id="start" class="primary" disabled>Generate</button>
       <button type="button" id="stop" hidden>Stop</button>
+      <button type="button" id="share" class="share">Copy link</button>
     </div>
     <p class="status" id="status" role="status">Loading the engine…</p>
+    <div class="share-box" id="share-box" hidden>
+      <p class="hint" id="share-note" role="status"></p>
+      <input type="url" id="share-link" readonly aria-label="Link to these settings" hidden>
+    </div>
     <p class="privacy">Everything runs on your device. Uploaded files never leave it; links are fetched
       directly, or through the <a href="https://wsrv.nl/">wsrv.nl</a> image proxy when a site blocks direct access.</p>
   </form>

@@ -11,6 +11,7 @@ const ui = {
   original: $('original'), result: $('result'), resultCaption: $('result-caption'),
   dlPng: $('dl-png'), dlSvg: $('dl-svg'), replay: $('replay'), duration: $('duration'),
   exportButtons: [...document.querySelectorAll('[data-export]')], exportStatus: $('export-status'),
+  share: $('share'), shareBox: $('share-box'), shareNote: $('share-note'), shareLink: $('share-link'),
 };
 
 const EXPORTS = {
@@ -26,6 +27,7 @@ const MODE_NAMES = {
 
 let source = null;       // ImageBitmap of the loaded image
 let sourceName = 'image';
+let sourceOrigin = null; // {url} or {sample} when the image can go in a share link
 let engineReady = false;
 let running = false;
 let lastSvg = null;
@@ -99,7 +101,7 @@ worker.onerror = (e) => finish('The engine crashed (' + e.message + '). Reload t
 
 // ---------------------------------------------------------------- loading images
 
-async function useBlob(blob, name) {
+async function useBlob(blob, name, origin = null) {
   if (blob.type && !blob.type.startsWith('image/')) throw new Error('That file is not an image.');
   let bitmap;
   try {
@@ -112,6 +114,7 @@ async function useBlob(blob, name) {
     finish('Stopped.');
   }
   source = bitmap;
+  sourceOrigin = origin;
   // both frames take the image's shape (the result keeps its aspect ratio)
   document.querySelector('.frames').style.setProperty('--ratio', bitmap.width / bitmap.height);
   sourceName = (name || 'image').replace(/\.[a-z0-9]+$/i, '').replace(/[^\w.-]+/g, '-').slice(0, 60) || 'image';
@@ -126,6 +129,7 @@ async function useBlob(blob, name) {
   setExportStatus('');
   setStatus(engineReady ? `Loaded ${bitmap.width}×${bitmap.height} image.` : 'Image loaded. Waiting for the engine…');
   updateButtons();
+  settingsChanged();
 }
 
 const PROXY = (u) => 'https://wsrv.nl/?url=' + encodeURIComponent(u) + '&w=2048&h=2048&fit=inside&we';
@@ -192,7 +196,8 @@ async function loadLink(raw) {
       throw new Error('Could not get an image from that link. If it is a web page, right-click the picture and choose “Copy image address”; otherwise save the image and upload the file.');
     }
   }
-  await useBlob(blob, name);
+  // the link as given, so a Pinterest pin is looked up again when shared
+  await useBlob(blob, name, { url: raw.trim() });
 }
 
 function guard(promise) {
@@ -211,9 +216,12 @@ ui.loadUrl.addEventListener('click', () => ui.url.value && guard(loadLink(ui.url
 ui.url.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); ui.loadUrl.click(); }
 });
-document.querySelectorAll('[data-sample]').forEach((b) => b.addEventListener('click', () => {
-  guard(fetchImage(b.dataset.sample).then((blob) => useBlob(blob, b.dataset.sample.split('/').pop())));
-}));
+const samples = [...document.querySelectorAll('[data-sample]')];
+const sampleName = (b) => b.dataset.sample.split('/').pop().replace(/\.\w+$/, '');
+function loadSample(b) {
+  return guard(fetchImage(b.dataset.sample).then((blob) => useBlob(blob, b.dataset.sample.split('/').pop(), { sample: sampleName(b) })));
+}
+samples.forEach((b) => b.addEventListener('click', () => loadSample(b)));
 
 // Drag and drop: files, or images dragged from another web page (which arrive as links).
 ['dragenter', 'dragover'].forEach((t) => document.addEventListener(t, (e) => {
@@ -450,9 +458,121 @@ ui.alphaAuto.addEventListener('change', () => {
 });
 ui.bgAuto.addEventListener('change', () => { ui.bg.disabled = ui.bgAuto.checked; });
 
-// Support sharing links like ?url=https://images.unsplash.com/...
-const shared = new URLSearchParams(location.search).get('url');
-if (shared) {
-  ui.url.value = shared;
-  guard(loadLink(shared));
+// ---------------------------------------------------------------- share links
+
+// A share link carries the settings in its query, named after the
+// command-line tool's flags (?m=5&n=200&a=128), and the image when it came
+// from a link or is a sample; uploaded images never leave the device.
+// Settings at their defaults are left out to keep links short. CPU threads
+// are left out too: the right number depends on the device opening the link.
+
+// Encodes a value but leaves the characters that are safe in a query, like
+// the slashes of an image link, so links stay readable.
+const linkValue = (v) => encodeURIComponent(v)
+  .replace(/%(2C|2F|3A|3D|3F|40)/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+const isDefault = (input) => (input.tagName === 'SELECT'
+  ? input.selectedOptions[0].defaultSelected : input.value === input.defaultValue);
+const fraction = (v) => String(+v.toFixed(2));
+
+function shareLink() {
+  const job = readJob();
+  const c = constraintsUI.settings();
+  const params = [];
+  if (!isDefault(ui.mode)) params.push(['m', job.mode]);
+  if (!isDefault(ui.countCustom)) params.push(['n', job.count]);
+  if (ui.alphaAuto.checked || !isDefault(ui.alpha)) params.push(['a', job.alpha]);
+  if (!isDefault(ui.repeat)) params.push(['rep', job.repeat]);
+  if (!isDefault(ui.inputSize)) params.push(['r', job.inputSize]);
+  if (!isDefault(ui.outputSize)) params.push(['s', job.outputSize]);
+  if (job.background) params.push(['bg', job.background]);
+  if (c.focus) params.push(['focus', c.focus.map(fraction).join(',')]);
+  if (c.angle !== undefined) params.push(['angle', c.angle]);
+  if (c.minSize) params.push(['minsize', fraction(c.minSize)]);
+  if (c.maxSize) params.push(['maxsize', fraction(c.maxSize)]);
+  if (sourceOrigin && sourceOrigin.sample) params.push(['sample', sourceOrigin.sample]);
+  if (sourceOrigin && sourceOrigin.url) params.push(['url', sourceOrigin.url]); // last, as the longest
+  const url = new URL(location.href);
+  url.search = params.map(([k, v]) => k + '=' + linkValue(v)).join('&');
+  url.hash = '';
+  return url.href;
 }
+
+// Keeps the address bar in step with the settings, so a reload keeps them
+// and the address works as a share link too.
+function settingsChanged() {
+  const link = shareLink();
+  if (link !== location.href) history.replaceState(null, '', link);
+  ui.shareBox.hidden = true; // what it says may be out of date now
+}
+ui.form.addEventListener('change', settingsChanged);
+
+let shareTimer = 0;
+ui.share.addEventListener('click', async () => {
+  const link = shareLink();
+  const notes = [];
+  if (source && !sourceOrigin) notes.push('Your image is not included: only samples and image links can be.');
+  if (constraintsUI.settings().region) notes.push('The painted region is not included.');
+  let copied = true;
+  try {
+    await navigator.clipboard.writeText(link);
+  } catch {
+    copied = false; // no clipboard access, e.g. permission denied or not https
+  }
+  clearTimeout(shareTimer);
+  ui.shareNote.textContent = [copied ? 'Link copied.' : 'Could not copy the link. Copy it from here:', ...notes].join(' ');
+  ui.shareLink.value = link;
+  ui.shareLink.hidden = copied;
+  ui.shareBox.hidden = false;
+  if (!copied) ui.shareLink.select();
+  // a plain confirmation goes away; notes stay until the settings change
+  else if (!notes.length) shareTimer = setTimeout(() => { ui.shareBox.hidden = true; }, 2500);
+});
+ui.shareLink.addEventListener('focus', () => ui.shareLink.select());
+
+// Applies a share link's settings, skipping any value the controls would
+// not accept, then loads its image. Older links with just ?url= work too.
+function applyLink(params) {
+  const get = (k) => (params.get(k) || '').trim();
+  const num = (v) => (v.trim() ? Number(v) : NaN);
+  // Sets a <select> or number input when the value is one it accepts. The
+  // events don't bubble, so the form leaves the address alone until the
+  // image has loaded.
+  const set = (input, v) => {
+    const ok = input.tagName === 'SELECT' ? [...input.options].some((o) => o.value === v)
+      : /^\d+$/.test(v) && +v >= +input.min && +v <= +input.max;
+    if (ok) {
+      input.value = v;
+      input.dispatchEvent(new Event(input.tagName === 'SELECT' ? 'change' : 'input'));
+    }
+    return ok;
+  };
+  set(ui.mode, get('m'));
+  set(ui.countCustom, get('n'));
+  if (set(ui.alpha, get('a')) || get('a') === '0') {
+    ui.alphaAuto.checked = get('a') === '0';
+    ui.alphaAuto.dispatchEvent(new Event('change'));
+  }
+  set(ui.repeat, get('rep'));
+  set(ui.inputSize, get('r'));
+  set(ui.outputSize, get('s'));
+  const bg = get('bg').replace(/^#/, '');
+  if (/^[0-9a-f]{6}$/i.test(bg)) {
+    ui.bg.value = '#' + bg.toLowerCase();
+    ui.bgAuto.checked = false;
+    ui.bgAuto.dispatchEvent(new Event('change'));
+  }
+  constraintsUI.apply({
+    focus: get('focus') ? get('focus').split(',').map(num) : null,
+    angle: num(get('angle')), minSize: num(get('minsize')), maxSize: num(get('maxsize')),
+  });
+
+  const sample = samples.find((b) => sampleName(b) === get('sample'));
+  if (sample) {
+    loadSample(sample);
+  } else if (get('url')) {
+    ui.url.value = get('url');
+    guard(loadLink(get('url')));
+  }
+}
+
+if (location.search) applyLink(new URLSearchParams(location.search));
