@@ -251,7 +251,11 @@ summary { cursor: pointer; font-size: 13px; text-transform: uppercase; letter-sp
 }
 figure { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .frame {
-  aspect-ratio: 1;
+  /* the image's shape, at most 75% of the window's height */
+  aspect-ratio: var(--ratio, 1);
+  width: 100%;
+  max-width: calc(75vh * var(--ratio, 1));
+  align-self: center;
   display: flex;
   align-items: center;
   justify-content: center;

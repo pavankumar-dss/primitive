@@ -112,6 +112,8 @@ async function useBlob(blob, name) {
     finish('Stopped.');
   }
   source = bitmap;
+  // both frames take the image's shape (the result keeps its aspect ratio)
+  document.querySelector('.frames').style.setProperty('--ratio', bitmap.width / bitmap.height);
   sourceName = (name || 'image').replace(/\.[a-z0-9]+$/i, '').replace(/[^\w.-]+/g, '-').slice(0, 60) || 'image';
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width;
