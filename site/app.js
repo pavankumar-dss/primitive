@@ -3,7 +3,8 @@
 const $ = (id) => document.getElementById(id);
 const ui = {
   form: $('controls'), drop: $('drop'), file: $('file'), url: $('url'), loadUrl: $('load-url'),
-  mode: $('mode'), count: $('count'), alpha: $('alpha'), alphaAuto: $('alpha-auto'),
+  mode: $('mode'), count: $('count'), countCustom: $('count-custom'), countWarn: $('count-warn'),
+  alpha: $('alpha'), alphaAuto: $('alpha-auto'),
   inputSize: $('input-size'), outputSize: $('output-size'), repeat: $('repeat'),
   bgAuto: $('bg-auto'), bg: $('bg'), start: $('start'), stop: $('stop'), status: $('status'),
   progress: $('progress'), progressBar: $('progress-bar'),
@@ -31,6 +32,7 @@ let lastSvg = null;
 let lastJob = null;
 let lastShapes = 0;      // shapes in the current result
 let exporting = null;    // format of the animation being made, if any
+let lastSpeed = null;    // {mode, inputSize, perSecond} measured on the last full run
 
 // ---------------------------------------------------------------- worker
 
@@ -57,6 +59,9 @@ worker.onmessage = ({ data }) => {
       const short = lastJob.constraints && data.shapes < lastJob.count
         ? ' Some steps found no shape that fits the constraints.' : '';
       finish(`Done: ${shapeLabel(data.shapes)} in ${fmtTime(data.elapsed)}.${short}`);
+      if (data.elapsed > 2000) {
+        lastSpeed = { mode: lastJob.mode, inputSize: lastJob.inputSize, perSecond: lastJob.count / data.elapsed * 1000 };
+      }
       ui.resultCaption.textContent = shapeLabel(data.shapes);
       break;
     }
@@ -243,7 +248,7 @@ document.addEventListener('paste', (e) => {
 function readJob() {
   return {
     mode: +ui.mode.value,
-    count: +ui.count.value,
+    count: readCount(),
     alpha: ui.alphaAuto.checked ? 0 : +ui.alpha.value,
     repeat: +ui.repeat.value,
     inputSize: +ui.inputSize.value,
@@ -360,7 +365,52 @@ function fmtTime(ms) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
 
-for (const [input, out, unit = ''] of [['count', 'count-out'], ['alpha', 'alpha-out'], ['repeat', 'repeat-out'], ['duration', 'duration-out', 's']]) {
+// ---------------------------------------------------------------- shape count
+
+const MAX_SHAPES = 10000;
+const SLOW_SHAPES = 1000;
+// rough shapes per second at a 128 px working size, by shape mode
+const SPEED = { 0: 3, 1: 5, 2: 5, 3: 3, 4: 3, 5: 4, 6: 2, 7: 1.8, 8: 3 };
+
+function readCount() {
+  const n = Math.round(+ui.countCustom.value);
+  return Number.isFinite(n) ? Math.min(MAX_SHAPES, Math.max(1, n)) : 100;
+}
+
+function updateCountWarning() {
+  const n = readCount();
+  ui.countWarn.hidden = n <= SLOW_SHAPES;
+  if (n <= SLOW_SHAPES) return;
+  const mode = +ui.mode.value, size = +ui.inputSize.value;
+  const perSecond = lastSpeed && lastSpeed.mode === mode && lastSpeed.inputSize === size
+    ? lastSpeed.perSecond : SPEED[mode] * 128 / size;
+  ui.countWarn.textContent = `More than ${SLOW_SHAPES} shapes takes a while: roughly ${fmtDuration(n / perSecond)}`
+    + ' with these settings. You can stop at any point and keep the result.';
+}
+
+function fmtDuration(seconds) {
+  const m = Math.round(seconds / 60);
+  if (m < 2) return 'a minute';
+  if (m < 90) return `${m} minutes`;
+  return `${(m / 60).toFixed(1).replace(/\.0$/, '')} hours`;
+}
+
+ui.count.addEventListener('input', () => {
+  ui.countCustom.value = ui.count.value;
+  updateCountWarning();
+});
+ui.countCustom.addEventListener('input', () => {
+  ui.count.value = Math.min(+ui.count.max, readCount());
+  updateCountWarning();
+});
+ui.countCustom.addEventListener('change', () => {
+  ui.countCustom.value = readCount();
+  updateCountWarning();
+});
+ui.mode.addEventListener('change', updateCountWarning);
+ui.inputSize.addEventListener('change', updateCountWarning);
+
+for (const [input, out, unit = ''] of [['alpha', 'alpha-out'], ['repeat', 'repeat-out'], ['duration', 'duration-out', 's']]) {
   const sync = () => { $(out).textContent = $(input).value + unit; };
   $(input).addEventListener('input', sync);
   sync();

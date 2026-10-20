@@ -34,7 +34,7 @@ async function run(id, job) {
     if (id !== runId) return;
     score = primitiveStep(mode, alpha, repeat);
     const now = performance.now();
-    if (i === count || now - lastPost > 150) {
+    if (i === count || now - lastPost > 150 + primitiveShapes() / 10) {
       lastPost = now;
       postMessage({ type: 'progress', done: i, count, shapes: primitiveShapes(), score, elapsed: now - start, svg: primitiveSVG() });
     }

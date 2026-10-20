@@ -27,6 +27,8 @@ const constraintsUI = (() => {
   let marker = null;
   let painting = false;
   let lastPoint = null;
+  let angleGuides = false; // parallels show briefly while the angle changes
+  let angleTimer = 0;
 
   // ------------------------------------------------------------ controls
 
@@ -79,7 +81,12 @@ const constraintsUI = (() => {
     if (+el.max.value <= +el.min.value) el.min.value = Math.max(0, +el.max.value - 2);
     sync();
   });
-  el.angle.addEventListener('input', sync);
+  el.angle.addEventListener('input', () => {
+    angleGuides = true;
+    clearTimeout(angleTimer);
+    angleTimer = setTimeout(() => { angleGuides = false; draw(); }, 900);
+    sync();
+  });
   el.mode.addEventListener('change', sync);
   el.switchMode.addEventListener('click', () => {
     el.mode.value = '5';
@@ -179,6 +186,7 @@ const constraintsUI = (() => {
   function onUp() {
     painting = false;
     lastPoint = null;
+    draw(); // hides the guide rays
   }
 
   function moveFocus(p) {
@@ -220,8 +228,9 @@ const constraintsUI = (() => {
       ctx.drawImage(mask, 0, 0);
       ctx.globalCompositeOperation = 'source-over';
     }
-    if (el.direction.value === 'focus') drawRays(ctx);
-    if (el.direction.value === 'angle') drawParallels(ctx);
+    // guides only while the direction is being changed
+    if (el.direction.value === 'focus' && painting && tool === 'spot') drawRays(ctx);
+    if (el.direction.value === 'angle' && angleGuides) drawParallels(ctx);
     marker.hidden = el.direction.value !== 'focus';
     marker.style.left = focus.x * 100 + '%';
     marker.style.top = focus.y * 100 + '%';

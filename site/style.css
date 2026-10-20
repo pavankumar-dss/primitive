@@ -25,7 +25,7 @@
   }
 }
 
-* { box-sizing: border-box; }
+*, ::before, ::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body {
   margin: 0;
@@ -127,6 +127,18 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field > span { display: flex; justify-content: space-between; font-size: 14px; }
 .field output { color: var(--muted); font-variant-numeric: tabular-nums; }
+.custom-count { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; margin-top: -4px; }
+.custom-count input {
+  width: 110px;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .bg-row { display: flex; align-items: center; justify-content: space-between; }
 
@@ -163,7 +175,7 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); tex
   top: 50%;
   width: 10px;
   height: 10px;
-  margin: -5px 0 0 -5px;
+  transform: translate(-50%, -50%);
   background: var(--warm);
   border: 2px solid #fff;
   border-radius: 50%;
