@@ -90,7 +90,7 @@ const constraintsUI = (() => {
   el.mode.addEventListener('change', sync);
   el.switchMode.addEventListener('click', () => {
     el.mode.value = '5';
-    sync();
+    el.mode.dispatchEvent(new Event('change', { bubbles: true })); // updates the shape picker and sync()
   });
   el.toolButtons.forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
   el.focusReset.addEventListener('click', () => moveFocus({ x: 0.5, y: 0.5 }));

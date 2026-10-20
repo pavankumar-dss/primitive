@@ -7,6 +7,7 @@
 <meta name="description" content="Reproduce any image with geometric primitives, right in your browser.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 28 14 4l12 24z' fill='%23f2b134' fill-opacity='.85'/%3E%3Ccircle cx='21' cy='18' r='9' fill='%23ed553b' fill-opacity='.7'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
+<script src="shape-picker.js" defer></script>
 <script src="constraints.js" defer></script>
 <script src="app.js" defer></script>
 </head>
@@ -48,9 +49,14 @@
 
     <section>
       <h2>Shapes</h2>
-      <label class="field">
-        <span>Shape</span>
-        <select id="mode">
+      <div class="field">
+        <span id="mode-label">Shape</span>
+        <div class="shape-picker">
+          <button type="button" class="picker-button" id="mode-button" aria-haspopup="listbox" aria-expanded="false"
+            aria-labelledby="mode-label mode-button"><span class="picker-value"></span></button>
+          <ul class="picker-list" id="mode-list" role="listbox" aria-labelledby="mode-label" tabindex="-1" hidden></ul>
+        </div>
+        <select id="mode" class="visually-hidden" tabindex="-1" aria-hidden="true">
           <option value="1" selected>Triangles</option>
           <option value="2">Rectangles</option>
           <option value="5">Rotated rectangles</option>
@@ -61,7 +67,7 @@
           <option value="6">Bézier curves</option>
           <option value="0">Combo (mix of all)</option>
         </select>
-      </label>
+      </div>
       <label class="field">
         <span>Number of shapes</span>
         <input type="range" id="count" min="10" max="1000" step="10" value="100">
