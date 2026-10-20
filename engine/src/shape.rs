@@ -4,7 +4,7 @@
 
 use crate::constraints::{Constraints, MIN_ORIENTED_ASPECT};
 use crate::core::Scanline;
-use crate::raster::Rasterizer;
+use crate::raster::{self, Rasterizer};
 use crate::rng::Rng;
 use std::fmt::Write;
 
@@ -515,9 +515,15 @@ impl Shape {
                 ry,
                 angle,
             } => rasterize_rotated_ellipse(x, y, rx, ry, angle, w, h, lines),
-            _ => {
-                // offset 0.5 as in rendering, which centers the shape's
-                // point (x, y) on pixel (x, y) (Go used 0, off by half a pixel)
+            Shape::Polygon { x, y, .. } => {
+                let points = [(x[0], y[0]), (x[1], y[1]), (x[2], y[2]), (x[3], y[3])];
+                raster::sample_polygon(&points, w, h, lines);
+            }
+            Shape::Quadratic { .. } => {
+                // Curves are half a pixel wide, too thin to search without
+                // anti-aliasing. Offset 0.5 as in rendering centers the
+                // shape's point (x, y) on pixel (x, y); Go used 0, off by
+                // half a pixel.
                 self.outline(r, 1.0, 0.5);
                 r.fill(w, h, lines);
             }
@@ -656,7 +662,7 @@ impl Shape {
                 let attrs = attrs.replace("fill", "stroke");
                 write!(
                     out,
-                    "<path {attrs} fill=\"none\" d=\"M {x1:.6} {y1:.6} Q {x2:.6} {y2:.6}, {x3:.6} {y3:.6}\" stroke-width=\"{width:.6}\" />"
+                    "<path {attrs} fill=\"none\" stroke-linecap=\"round\" d=\"M {x1:.6} {y1:.6} Q {x2:.6} {y2:.6}, {x3:.6} {y3:.6}\" stroke-width=\"{width:.6}\" />"
                 )
             }
             Shape::RotatedEllipse {
