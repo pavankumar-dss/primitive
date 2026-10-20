@@ -239,6 +239,8 @@ summary { cursor: pointer; font-size: 13px; text-transform: uppercase; letter-sp
 
 .actions { display: flex; gap: 8px; }
 .actions button { flex: 1; padding: 10px; font-size: 16px; }
+.actions .share { flex: none; padding: 10px 14px; font-size: 14px; }
+.share-box { display: flex; flex-direction: column; gap: 6px; margin-top: -12px; }
 .status { margin: -6px 0 0; min-height: 1.5em; font-size: 14px; font-variant-numeric: tabular-nums; }
 .status.error { color: var(--warm); }
 
@@ -263,12 +265,63 @@ figure { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 
   overflow: hidden;
   background: repeating-conic-gradient(var(--checker) 0 25%, transparent 0 50%) 0 0 / 20px 20px, var(--panel);
   border: 1px solid var(--line);
+  position: relative;
 }
 .frame canvas, .frame svg { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; }
 .frame svg { width: 100%; height: 100%; }
 .placeholder { color: var(--muted); padding: 16px; text-align: center; margin: 0; }
-figcaption { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; min-height: 32px; }
+figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; min-height: 32px; }
 figcaption button { padding: 4px 12px; font-size: 13px; }
+.caption-buttons { display: flex; gap: 6px; margin-left: auto; }
+.caption-buttons button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.scrub { flex-basis: 100%; margin: 0; }
+
+/* the result, and the original laid over it for comparing */
+.result { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.compare { position: absolute; inset: 0; cursor: ew-resize; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.compare-original { position: absolute; inset: 0; clip-path: inset(0 calc(100% - var(--split)) 0 0); }
+.frame .compare-original canvas { width: 100%; height: 100%; max-width: none; max-height: none; }
+.compare-label {
+  position: absolute;
+  top: 8px;
+  padding: 1px 8px;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font-size: 12px;
+  pointer-events: none;
+}
+.compare-label.left { left: 8px; }
+.compare-label.right { right: 8px; }
+.compare-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--split);
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35);
+  outline: none;
+}
+.compare-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .45);
+}
+.compare-knob svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.compare-handle:focus-visible .compare-knob { outline: 3px solid var(--accent); outline-offset: 2px; }
 
 .exports {
   display: flex;

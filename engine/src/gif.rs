@@ -4,23 +4,24 @@
 use crate::model::Model;
 use crate::render::Animator;
 
-/// Encodes the animation, fitting within max_side x max_side. delay is the
-/// time between frames and last_delay the time the finished image is held,
-/// both in hundredths of a second.
+/// Encodes the animation of the first count shapes, fitting within
+/// max_side x max_side. delay is the time between frames and last_delay the
+/// time the finished image is held, both in hundredths of a second.
 pub fn encode(
     model: &Model,
+    count: usize,
     max_side: usize,
     frames: usize,
     delay: u16,
     last_delay: u16,
 ) -> Vec<u8> {
-    let counts = model.animation_counts(frames.max(2));
+    let counts = model.animation_counts(frames.max(2), count);
     let mut a = Animator::new(model, max_side, false);
     let (width, height) = (a.width, a.height);
 
     // palette from the finished image; the index after it is transparent
     let final_frame = Animator::new(model, max_side, false)
-        .frame(model, model.shapes.len())
+        .frame(model, count)
         .to_vec();
     let pal = quantize(&final_frame, 255);
     let transparent = pal.len() as u8;

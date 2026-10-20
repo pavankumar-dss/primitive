@@ -344,7 +344,13 @@ impl Model {
         self.colors.push(color);
     }
 
-    fn svg_with(&self, style: &str, group: &str, delay: impl Fn(usize) -> Option<f64>) -> String {
+    fn svg_with(
+        &self,
+        n: usize,
+        style: &str,
+        group: &str,
+        delay: impl Fn(usize) -> Option<f64>,
+    ) -> String {
         let bg = self.background;
         let mut out = String::new();
         let _ = writeln!(
@@ -364,7 +370,8 @@ impl Model {
             self.scale
         );
         let mut line = String::new();
-        for (i, (shape, c)) in self.shapes.iter().zip(&self.colors).enumerate() {
+        let shapes = self.shapes.iter().zip(&self.colors).take(n);
+        for (i, (shape, c)) in shapes.enumerate() {
             let attrs = format!(
                 "fill=\"#{:02x}{:02x}{:02x}\" fill-opacity=\"{:.6}\"",
                 c.r,
@@ -387,24 +394,31 @@ impl Model {
     }
 
     pub fn svg(&self) -> String {
-        self.svg_with("", "", |_| None)
+        self.svg_first(self.shapes.len())
     }
 
-    /// An SVG in which the shapes fade in one after another over duration
-    /// seconds, then stay.
-    pub fn animated_svg(&self, duration: f64) -> String {
-        let n = self.shapes.len();
+    /// An SVG of only the first n shapes, as the picture was after n steps.
+    pub fn svg_first(&self, n: usize) -> String {
+        self.svg_with(n, "", "", |_| None)
+    }
+
+    /// An SVG in which the first n shapes fade in one after another over
+    /// duration seconds, then stay.
+    pub fn animated_svg(&self, duration: f64, n: usize) -> String {
+        let n = n.min(self.shapes.len());
         self.svg_with(
+            n,
             "<style>.p>*{opacity:0;animation:f .3s ease-out forwards}@keyframes f{to{opacity:1}}@media (prefers-reduced-motion:reduce){.p>*{animation:none;opacity:1}}</style>\n",
             " class=\"p\"",
             |i| Some(duration * shape_time(i, n)),
         )
     }
 
-    /// For each of the given number of frames, how many shapes are visible:
-    /// the first frame shows only the background, the last every shape.
-    pub fn animation_counts(&self, frames: usize) -> Vec<usize> {
-        let n = self.shapes.len() as f64;
+    /// For each of the given number of frames, how many shapes are visible
+    /// in an animation of the first n: the first frame shows only the
+    /// background, the last all n.
+    pub fn animation_counts(&self, frames: usize, n: usize) -> Vec<usize> {
+        let n = n.min(self.shapes.len()) as f64;
         (0..frames)
             .map(|k| {
                 if frames > 1 {
@@ -624,11 +638,41 @@ mod tests {
             let s = m.search(ShapeType::Rectangle, 128, 1);
             m.commit(s, 0);
         }
-        let c = m.animation_counts(5);
+        let c = m.animation_counts(5, 7);
         assert_eq!((c[0], c[4]), (0, 7));
         assert!(c.windows(2).all(|w| w[0] <= w[1]));
-        let svg = m.animated_svg(4.0);
+        let c = m.animation_counts(5, 3);
+        assert_eq!((c[0], c[4]), (0, 3));
+        assert_eq!(m.animation_counts(3, 99), m.animation_counts(3, 7));
+        let svg = m.animated_svg(4.0, 7);
         assert_eq!(svg.matches("animation-delay").count(), 7);
         assert!(svg.contains("animation-delay:4.000s"));
+    }
+
+    // Everything made from the first shapes of a picture, as the site's
+    // shape-count slider asks for, must match a picture that only ever had
+    // those shapes.
+    #[test]
+    fn first_shapes() {
+        let mut m = test_model(6);
+        let mut short = test_model(6);
+        for i in 0..7 {
+            let s = m.search(ShapeType::Triangle, 128, 1);
+            for s in m.commit(s, 0) {
+                if i < 3 {
+                    short.add(s.shape, s.alpha);
+                }
+            }
+        }
+        assert_eq!(short.shapes.len(), 3);
+        assert_eq!(m.svg_first(3), short.svg());
+        assert_eq!(m.svg_first(3).matches("<polygon").count(), 3);
+        assert_eq!(m.svg_first(7), m.svg());
+        assert_eq!(m.svg_first(99), m.svg());
+        assert_eq!(m.animated_svg(2.0, 3), short.animated_svg(2.0, 3));
+        assert_eq!(
+            crate::gif::encode(&m, 3, 64, 10, 6, 100),
+            crate::gif::encode(&short, 3, 64, 10, 6, 100)
+        );
     }
 }
