@@ -2,9 +2,10 @@
 
 // Constraint controls: direction (toward a spot or along an angle), shape
 // size limits, and a painted region, set by clicking and painting on the
-// original image. app.js calls constraintsUI.attach() when an image loads
-// and constraintsUI.read() when a run starts; settings() and apply() carry
-// the controls in and out of share links.
+// original image (or by clicking a subject for segment-worker.js to find).
+// app.js calls constraintsUI.attach() when an image loads and
+// constraintsUI.read() when a run starts; settings() and apply() carry the
+// controls in and out of share links.
 const constraintsUI = (() => {
   const $ = (id) => document.getElementById(id);
   const el = {
@@ -16,6 +17,7 @@ const constraintsUI = (() => {
     min: $('c-min'), minOut: $('c-min-out'), max: $('c-max'), maxOut: $('c-max-out'),
     region: $('c-region'), regionTools: $('c-region-tools'), brush: $('c-brush'),
     clear: $('c-clear'), invert: $('c-invert'), outside: $('c-outside'),
+    subject: $('c-subject'), subjectStatus: $('c-subject-status'),
     tools: $('tools'), toolButtons: [...document.querySelectorAll('[data-tool]')],
   };
   const ORIENTED_MODES = ['0', '5', '6', '7']; // combo, rotated rect, Bézier, rotated ellipse
@@ -30,6 +32,13 @@ const constraintsUI = (() => {
   let lastPoint = null;
   let angleGuides = false; // parallels show briefly while the angle changes
   let angleTimer = 0;
+  let source = null;   // the original image's canvas
+
+  // subject selection (see segment-worker.js)
+  let segmenter = null;  // the worker, once someone asks for a subject
+  let points = [];       // clicks so far: {x, y, include}, in fractions
+  let seq = 0;           // numbers requests, so late masks are dropped
+  let inverted = false;  // Invert was pressed: found subjects become holes
 
   // ------------------------------------------------------------ controls
 
@@ -46,6 +55,7 @@ const constraintsUI = (() => {
     // offer only the tools that apply, and keep a valid one selected
     const available = [];
     if (dir === 'focus') available.push('spot');
+    if (el.region.checked && segmenter) available.push('pick', 'unpick');
     if (el.region.checked) available.push('paint', 'erase');
     el.toolButtons.forEach((b) => {
       b.hidden = !available.includes(b.dataset.tool);
@@ -101,28 +111,113 @@ const constraintsUI = (() => {
   el.clear.addEventListener('click', () => {
     if (!mask) return;
     mask.getContext('2d').clearRect(0, 0, mask.width, mask.height);
+    points = [];
+    seq++;
+    if (segmenter) subjectStatus('ready');
     draw();
   });
   el.invert.addEventListener('click', () => {
     if (!mask) return;
-    const inverted = document.createElement('canvas');
-    inverted.width = mask.width;
-    inverted.height = mask.height;
-    const ctx = inverted.getContext('2d');
+    inverted = !inverted;
+    const flipped = document.createElement('canvas');
+    flipped.width = mask.width;
+    flipped.height = mask.height;
+    const ctx = flipped.getContext('2d');
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, mask.width, mask.height);
     ctx.globalCompositeOperation = 'destination-out';
     ctx.drawImage(mask, 0, 0);
     const m = mask.getContext('2d');
     m.clearRect(0, 0, mask.width, mask.height);
-    m.drawImage(inverted, 0, 0);
+    m.drawImage(flipped, 0, 0);
     draw();
   });
+
+  // ------------------------------------------------------------ subject selection
+
+  // The first press loads the model and looks at the image; then clicks
+  // with Select (or Exclude) add points the subject includes (or not).
+  el.subject.addEventListener('click', () => {
+    if (!segmenter) {
+      segmenter = new Worker('segment-worker.js', { type: 'module' });
+      segmenter.onmessage = onSegment;
+      segmenter.onerror = (e) => {
+        e.preventDefault();
+        subjectStatus('error', e.message || 'the selection model could not start');
+      };
+      sendImage();
+    }
+    setTool('pick');
+    sync();
+  });
+
+  function sendImage() {
+    if (!segmenter || !source) return;
+    // the model looks at 1024 pixels at most anyway
+    const scale = Math.min(1, 1024 / Math.max(source.width, source.height));
+    const w = Math.max(1, Math.round(source.width * scale));
+    const h = Math.max(1, Math.round(source.height * scale));
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, 0, 0, w, h);
+    const pixels = ctx.getImageData(0, 0, w, h).data.buffer;
+    segmenter.postMessage({ type: 'image', pixels, width: w, height: h }, [pixels]);
+    subjectStatus('looking');
+  }
+
+  function onSegment({ data }) {
+    if (data.type === 'progress') subjectStatus('loading', data.loaded);
+    else if (data.type === 'looking') subjectStatus('looking');
+    else if (data.type === 'ready') subjectStatus(points.length ? 'selected' : 'ready');
+    else if (data.type === 'error') subjectStatus('error', data.message);
+    else if (data.type === 'mask' && data.seq === seq) {
+      // the found subject becomes the region (or a hole in it, inverted)
+      const canvas = new OffscreenCanvas(data.width, data.height);
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(data.width, data.height);
+      for (let i = 0; i < data.data.length; i++) {
+        img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 255;
+        img.data[i * 4 + 3] = inverted ? 255 - data.data[i] : data.data[i];
+      }
+      ctx.putImageData(img, 0, 0);
+      const m = mask.getContext('2d');
+      m.globalCompositeOperation = 'source-over';
+      m.clearRect(0, 0, mask.width, mask.height);
+      m.imageSmoothingQuality = 'high';
+      m.drawImage(canvas, 0, 0, mask.width, mask.height);
+      subjectStatus('selected');
+      draw();
+    }
+  }
+
+  function addPoint(p, include) {
+    points.push({ x: p.x, y: p.y, include });
+    segmenter.postMessage({ type: 'points', seq: ++seq, points });
+    draw();
+  }
+
+  function subjectStatus(state, detail) {
+    el.subjectStatus.hidden = false;
+    el.subjectStatus.classList.toggle('warn', state === 'error');
+    el.subjectStatus.textContent = {
+      loading: `Loading the selection model (28 MB, only the first time)… ${Math.round((detail || 0) * 100)}%`,
+      looking: 'Looking at the image… (a few seconds)',
+      ready: 'Click the subject on the original image.',
+      selected: 'Click to add more with Select, click away parts with Exclude, or touch up with Paint and Erase.',
+      error: `Subject selection failed (${String(detail).replace(/\.$/, '')}). Paint the region instead.`,
+    }[state];
+  }
 
   // ------------------------------------------------------------ the original image
 
   // Wraps the original image's canvas with a paintable overlay and a marker.
   function attach(frame, imageCanvas) {
+    source = imageCanvas;
+    points = [];
+    seq++;
+    inverted = false;
+    sendImage();
     const scale = Math.min(1, MASK_SIZE / Math.max(imageCanvas.width, imageCanvas.height));
     mask = document.createElement('canvas');
     mask.width = Math.max(1, Math.round(imageCanvas.width * scale));
@@ -164,6 +259,10 @@ const constraintsUI = (() => {
     e.preventDefault();
     overlay.setPointerCapture(e.pointerId);
     const p = pointFrom(e);
+    if (tool === 'pick' || tool === 'unpick') {
+      addPoint(p, tool === 'pick');
+      return;
+    }
     if (tool === 'spot') {
       moveFocus(p);
       painting = true; // dragging moves the spot too
@@ -238,6 +337,19 @@ const constraintsUI = (() => {
       ctx.globalCompositeOperation = 'destination-out';
       ctx.drawImage(mask, 0, 0);
       ctx.globalCompositeOperation = 'source-over';
+    }
+    // the subject's clicks: light for Select, dark for Exclude
+    if (el.region.checked) {
+      const px = overlay.width / Math.max(1, overlay.clientWidth);
+      for (const pt of points) {
+        ctx.beginPath();
+        ctx.arc(pt.x * overlay.width, pt.y * overlay.height, 5 * px, 0, 2 * Math.PI);
+        ctx.fillStyle = pt.include ? '#fff' : '#111';
+        ctx.strokeStyle = pt.include ? '#111' : '#fff';
+        ctx.lineWidth = 2 * px;
+        ctx.fill();
+        ctx.stroke();
+      }
     }
     // guides only while the direction is being changed
     if (el.direction.value === 'focus' && painting && tool === 'spot') drawRays(ctx);
