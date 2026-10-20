@@ -114,7 +114,9 @@
       </label>
       <label class="check"><input type="checkbox" id="c-region"> Only paint inside a region</label>
       <div class="region-tools" id="c-region-tools" hidden>
-        <p class="hint">Paint over the original image where shapes may go.</p>
+        <p class="hint">Paint over the original image where shapes may go, or let it find the subject.</p>
+        <button type="button" id="c-subject">Select the subject</button>
+        <p class="hint" id="c-subject-status" role="status" hidden></p>
         <label class="field">
           <span>Around the region</span>
           <select id="c-outside">
@@ -198,6 +200,8 @@
           <span>Original</span>
           <span class="tools" id="tools" hidden>
             <button type="button" data-tool="spot">Move spot</button>
+            <button type="button" data-tool="pick">Select</button>
+            <button type="button" data-tool="unpick">Exclude</button>
             <button type="button" data-tool="paint">Paint</button>
             <button type="button" data-tool="erase">Erase</button>
           </span>
@@ -243,7 +247,8 @@
 </main>
 
 <footer>
-  Based on <a href="https://github.com/fogleman/primitive">primitive</a> by Michael Fogleman · runs a Rust port of it via WebAssembly
+  Based on <a href="https://github.com/fogleman/primitive">primitive</a> by Michael Fogleman · runs a Rust port of it via WebAssembly ·
+  subject selection by <a href="https://github.com/czg1225/SlimSAM">SlimSAM</a> on <a href="https://github.com/huggingface/transformers.js">Transformers.js</a> and <a href="https://onnxruntime.ai/">ONNX Runtime</a>
 </footer>
 </body>
 </html>
