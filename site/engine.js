@@ -1,10 +1,12 @@
 // Loads the engine that runs the primitive algorithm, inside a worker: the
 // Rust port in engine/, built to engine.wasm, wrapped in this interface:
 //
-//   init(pixels, width, height, outputSize, background, constraints, seed)
-//                    → starting score; background is hex or '' for average
+//   init(pixels, width, height, outputSize, background, constraints, seed, palette)
+//                    → starting score; background is hex or '' for average;
+//                      palette is null, a number of colors to choose from
+//                      the image, or a list of hex colors; constraints.keep
+//                      keeps the image outside constraints.region
 //   search(mode, alpha, searches, fresh) → energy of the best shape so far
-//                    constraints.keep keeps the image outside constraints.region
 //   setBase(pixels, mask, width, height) → what renders show around a kept
 //                    region: RGBA pixels and a mask byte per pixel, any size
 //   commit(repeat)   → the shapes added (opaque, with a length), for apply
@@ -27,9 +29,15 @@ async function loadEngine(module) {
   let frameSize = 0;
   const all = (count) => count ?? x.shape_count();
   return {
-    init(pixels, width, height, outputSize, background, constraints, seed) {
-      put(pixels);
-      const score = x.init(width, height, outputSize, background ? parseInt(background, 16) : -1, seed);
+    init(pixels, width, height, outputSize, background, constraints, seed, palette) {
+      // given colors follow the pixels, 3 bytes each
+      const given = Array.isArray(palette) ? palette.map((hex) => parseInt(hex, 16)) : [];
+      const input = new Uint8Array(pixels.length + given.length * 3);
+      input.set(pixels);
+      given.forEach((c, k) => input.set([c >> 16 & 255, c >> 8 & 255, c & 255], pixels.length + k * 3));
+      put(input);
+      const score = x.init(width, height, outputSize, background ? parseInt(background, 16) : -1, seed,
+        given.length || palette || 0, given.length ? 1 : 0);
       if (constraints) {
         const c = constraints;
         // a kept region clips shapes instead of penalizing those outside it

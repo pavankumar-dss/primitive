@@ -16,6 +16,9 @@ Usage: primitive [OPTIONS] -i input -o output -n count
   -a alpha      shape opacity, 1-255, or 0 to let the search pick (default 128)
   -rep n        add n extra shapes per step with a reduced search (default 0)
   -bg hex       background color (default: the image's average color)
+  -palette p    limit shape colors to a palette: a number of colors chosen
+                from the image (up to 256, e.g. 8), or hex colors separated
+                by commas (e.g. 264653,e9c46a,e76f51)
   -r size       shrink the input to this size before searching (default 256)
   -s size       output image size (default 1024)
   -j n          parallel workers (default: all cores, up to 16)
@@ -44,6 +47,7 @@ pub struct Args {
     pub outputs: Vec<String>,
     pub configs: Vec<ShapeConfig>,
     pub background: Option<String>,
+    pub palette: Option<String>,
     pub input_size: usize,
     pub output_size: usize,
     pub workers: usize,
@@ -77,6 +81,7 @@ pub fn parse(argv: impl IntoIterator<Item = String>) -> Result<Option<Args>, Str
         outputs: vec![],
         configs: vec![],
         background: None,
+        palette: None,
         input_size: 256,
         output_size: 1024,
         workers: 0,
@@ -126,6 +131,7 @@ pub fn parse(argv: impl IntoIterator<Item = String>) -> Result<Option<Args>, Str
                     "a" => alpha = number(name, &value)?,
                     "rep" => repeat = number(name, &value)?,
                     "bg" => a.background = Some(value),
+                    "palette" => a.palette = Some(value),
                     "r" => a.input_size = number(name, &value)?,
                     "s" => a.output_size = number(name, &value)?,
                     "j" => a.workers = number(name, &value)?,
@@ -238,9 +244,12 @@ mod tests {
 
     #[test]
     fn several_outputs_and_constraints() {
-        let a =
-            run("-i a -o x.png -o y.svg -n 1 -focus 0.5,0.25 -angle -30 -minsize 0.1 -vv").unwrap();
+        let a = run(
+            "-i a -o x.png -o y.svg -n 1 -focus 0.5,0.25 -angle -30 -minsize 0.1 -palette 8 -vv",
+        )
+        .unwrap();
         assert_eq!(a.outputs, ["x.png", "y.svg"]);
+        assert_eq!(a.palette.as_deref(), Some("8"));
         assert_eq!(a.focus, Some((0.5, 0.25)));
         assert_eq!(a.angle, Some(-30.0));
         assert_eq!(a.min_size, 0.1);

@@ -9,6 +9,7 @@ use primitive_engine::constraints::{Constraints, Options};
 use primitive_engine::core::{self, Color};
 use primitive_engine::gif;
 use primitive_engine::model::{Model, State};
+use primitive_engine::palette::Palette;
 use primitive_engine::render::{Animator, Base};
 use primitive_engine::shape::ShapeType;
 use std::io::{Read, Write};
@@ -55,13 +56,20 @@ fn run(args: &Args) -> Result<(), String> {
     let (w, h) = (input.width() as usize, input.height() as usize);
     let pixels = input.into_raw();
 
+    let palette = match &args.palette {
+        Some(p) => Some(parse_palette(p, &pixels)?),
+        None => None,
+    };
     let chosen_background = match &args.background {
         Some(hex) => {
             Some(parse_hex(hex).ok_or_else(|| format!("-bg must be a hex color, not {hex:?}"))?)
         }
         None => None,
     };
-    let background = chosen_background.unwrap_or_else(|| core::average_color(&pixels));
+    let background = chosen_background.unwrap_or_else(|| {
+        let average = core::average_color(&pixels);
+        palette.as_ref().map_or(average, |p| p.nearest(average))
+    });
     let region_image = match &args.region {
         Some(path) => Some(load_image(path).map_err(|e| format!("reading -region: {e}"))?),
         None => None,
@@ -92,6 +100,7 @@ fn run(args: &Args) -> Result<(), String> {
             if let (true, Some(region)) = (args.keep, &region) {
                 m.keep_outside(region, chosen_background);
             }
+            m.set_palette(palette.clone());
             m
         })
         .collect();
@@ -321,6 +330,24 @@ fn parse_hex(s: &str) -> Option<Color> {
     })
 }
 
+/// The palette for -palette: a number of colors (up to 256) to choose from
+/// the image's pixels, or hex colors separated by commas.
+fn parse_palette(s: &str, pixels: &[u8]) -> Result<Palette, String> {
+    if let Ok(n) = s.trim().parse::<usize>()
+        && n <= 256
+    {
+        return match n {
+            0 => Err("-palette needs at least one color".into()),
+            n => Ok(Palette::from_image(pixels, n)),
+        };
+    }
+    let colors = s
+        .split(',')
+        .map(|hex| parse_hex(hex).ok_or_else(|| format!("-palette: {hex:?} is not a hex color")))
+        .collect::<Result<Vec<Color>, String>>()?;
+    Palette::new(colors).ok_or_else(|| "-palette needs at least one color".into())
+}
+
 /// The output path for a frame: the first %d (or %0Nd, %Nd) in the pattern
 /// replaced by the frame number, as Go's Sprintf did.
 fn frame_path(pattern: &str, frame: usize) -> String {
@@ -365,6 +392,24 @@ mod tests {
         assert_eq!(parse_hex("ff800080"), c(255, 128, 0, 128));
         assert_eq!(parse_hex("12345"), None);
         assert_eq!(parse_hex("zzzzzz"), None);
+    }
+
+    #[test]
+    fn palettes() {
+        let pixels = [10, 20, 30, 255, 200, 100, 0, 255].repeat(8);
+        // the image has only two colors
+        assert_eq!(parse_palette("4", &pixels).unwrap().colors().len(), 2);
+        let given = parse_palette("ff0000, #0f0,0000ff", &pixels).unwrap();
+        let rgb: Vec<_> = given.colors().iter().map(|c| (c.r, c.g, c.b)).collect();
+        assert_eq!(rgb, [(255, 0, 0), (0, 255, 0), (0, 0, 255)]);
+        // too many to be a count, so a color
+        assert_eq!(parse_palette("888", &pixels).unwrap().colors().len(), 1);
+        assert!(parse_palette("0", &pixels).is_err());
+        assert!(
+            parse_palette("ff0000,red", &pixels)
+                .unwrap_err()
+                .contains("red")
+        );
     }
 
     #[test]

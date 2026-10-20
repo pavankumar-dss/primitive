@@ -90,9 +90,10 @@ const nextTick = () => new Promise((resolve) => {
 async function run(id, job) {
   if (!engine) return; // load failed; already reported
   const { width, height, mode, count, alpha, repeat, outputSize, background, constraints } = job;
+  const palette = job.palette || null; // every model needs the same, for replays to match
   const pixels = new Uint8Array(job.pixels);
   if (constraints && constraints.region) constraints.region = new Uint8Array(constraints.region);
-  engine.init(pixels, width, height, outputSize, background, constraints || null, seed());
+  engine.init(pixels, width, height, outputSize, background, constraints || null, seed(), palette);
   // renders show the original around a kept region, sharper than the
   // working-size copy the engine has
   if (job.base) engine.setBase(new Uint8Array(job.base.pixels), job.base.mask, job.base.width, job.base.height);
@@ -100,7 +101,7 @@ async function run(id, job) {
   const threads = Math.max(1, Math.min(MAX_THREADS, job.threads || 1));
   while (pool.length < threads) pool.push(spawn());
   const searchers = pool.slice(0, threads);
-  for (const s of searchers) s.send({ type: 'init', pixels, width, height, background, constraints: constraints || null, seed: seed() });
+  for (const s of searchers) s.send({ type: 'init', pixels, width, height, background, constraints: constraints || null, seed: seed(), palette });
 
   const start = performance.now();
   let lastPost = 0;

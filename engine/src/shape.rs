@@ -107,6 +107,10 @@ impl Env<'_> {
         self.constraints.and_then(|c| c.direction(x, y))
     }
 
+    fn oriented(&self) -> bool {
+        self.constraints.is_some_and(|c| c.oriented())
+    }
+
     /// A step of a normally distributed size, truncated like Go's int().
     fn step(&mut self, scale: f64) -> i32 {
         (self.rnd.norm() * scale) as i32
@@ -115,6 +119,13 @@ impl Env<'_> {
 
 /// Points of a triangle or polygon may lie this far outside the image.
 const MARGIN: i32 = 16;
+
+/// Curve widths in working pixels, from the half pixel that Go always used
+/// (its width mutation was never reached) to a broad brush stroke. Wider
+/// curves still score a little better, but look like blobs rather than
+/// strokes.
+const MIN_WIDTH: f64 = 0.5;
+const MAX_WIDTH: f64 = 8.0;
 
 impl Shape {
     pub fn random(t: ShapeType, e: &mut Env) -> Shape {
@@ -184,6 +195,7 @@ impl Shape {
                 let y2 = y1 + e.rnd.float() * 40.0 - 20.0;
                 let x3 = x2 + e.rnd.float() * 40.0 - 20.0;
                 let y3 = y2 + e.rnd.float() * 40.0 - 20.0;
+                let width = MIN_WIDTH + e.rnd.float() * (MAX_WIDTH - MIN_WIDTH);
                 Shape::Quadratic {
                     x1,
                     y1,
@@ -191,7 +203,7 @@ impl Shape {
                     y2,
                     x3,
                     y3,
-                    width: 0.5,
+                    width,
                 }
             }
             ShapeType::RotatedEllipse => {
@@ -234,6 +246,7 @@ impl Shape {
         let (w, h) = (e.w, e.h);
         let m = MARGIN;
         match self {
+            Shape::Triangle { .. } if e.oriented() => self.mutate_arrowhead(e),
             Shape::Triangle {
                 x1,
                 y1,
@@ -249,7 +262,7 @@ impl Shape {
                 };
                 *x = (*x + e.step(16.0)).clamp(-m, w - 1 + m);
                 *y = (*y + e.step(16.0)).clamp(-m, h - 1 + m);
-                if triangle_valid(*x1, *y1, *x2, *y2, *x3, *y3) {
+                if triangle_angles_valid(*x1, *y1, *x2, *y2, *x3, *y3) {
                     break;
                 }
             },
@@ -323,13 +336,18 @@ impl Shape {
                     y2,
                     x3,
                     y3,
-                    ..
+                    width,
                 } = self
                 {
-                    let (x, y) = match e.rnd.intn(3) {
+                    let (x, y) = match e.rnd.intn(4) {
                         0 => (x1, y1),
                         1 => (x2, y2),
-                        _ => (x3, y3),
+                        2 => (x3, y3),
+                        _ => {
+                            // the points stay put, so the curve stays valid
+                            *width = (*width + e.rnd.norm()).clamp(MIN_WIDTH, MAX_WIDTH);
+                            break;
+                        }
                     };
                     *x = (*x + e.rnd.norm() * 16.0).clamp(-m as f64, (w - 1 + m) as f64);
                     *y = (*y + e.rnd.norm() * 16.0).clamp(-m as f64, (h - 1 + m) as f64);
@@ -380,6 +398,77 @@ impl Shape {
         }
     }
 
+    /// Mutates a triangle under a direction constraint. Triangles are then
+    /// arrowheads: isosceles, with the apex pointing along the direction,
+    /// and at least MIN_ORIENTED_ASPECT times as long as the base is wide.
+    /// Moving a vertex would rarely leave an arrowhead, so instead a move
+    /// changes the centroid, the length or the aspect, and the vertices
+    /// are rebuilt from those on whole pixels. Rounding leaves the apex off
+    /// by up to asin(1.42 / length): 4 degrees at 20 pixels long.
+    fn mutate_arrowhead(&mut self, e: &mut Env) {
+        const MIN_LENGTH: f64 = 4.0;
+        // an aspect over 3.8 would make the apex sharper than the 15
+        // degrees all triangles keep; this leaves room for rounding
+        const MAX_ASPECT: f64 = 3.6;
+        let Shape::Triangle {
+            x1,
+            y1,
+            x2,
+            y2,
+            x3,
+            y3,
+        } = *self
+        else {
+            unreachable!()
+        };
+        let p = [(x1, y1), (x2, y2), (x3, y3)].map(|(x, y)| (x as f64, y as f64));
+        let k = triangle_apex(&p);
+        let (a, b, c) = (p[k], p[(k + 1) % 3], p[(k + 2) % 3]);
+        let (cx, cy) = ((a.0 + b.0 + c.0) / 3.0, (a.1 + b.1 + c.1) / 3.0);
+        let (mx, my) = ((b.0 + c.0) / 2.0, (b.1 + c.1) / 2.0);
+        let len = (a.0 - mx).hypot(a.1 - my);
+        let aspect = len / (c.0 - b.0).hypot(c.1 - b.1).max(1.0);
+        let (w, h) = ((e.w - 1) as f64, (e.h - 1) as f64);
+        loop {
+            let (mut cx, mut cy, mut len, mut aspect) = (cx, cy, len, aspect);
+            match e.rnd.intn(3) {
+                0 => {
+                    cx = (cx + e.rnd.norm() * 16.0).clamp(0.0, w);
+                    cy = (cy + e.rnd.norm() * 16.0).clamp(0.0, h);
+                }
+                1 => len += e.rnd.norm() * 16.0,
+                _ => aspect += e.rnd.norm() * 0.5,
+            }
+            let len = len.clamp(MIN_LENGTH, w.max(h));
+            let half = len / aspect.clamp(MIN_ORIENTED_ASPECT, MAX_ASPECT) / 2.0;
+            let (sin, cos) = e.direction(cx, cy).unwrap_or(0.0).to_radians().sin_cos();
+            // a point this far along the direction and across it from the centroid
+            let at = |along: f64, across: f64| {
+                (
+                    (cx + along * cos - across * sin).round() as i32,
+                    (cy + along * sin + across * cos).round() as i32,
+                )
+            };
+            let ((x1, y1), (x2, y2), (x3, y3)) = (
+                at(len * 2.0 / 3.0, 0.0),
+                at(-len / 3.0, half),
+                at(-len / 3.0, -half),
+            );
+            let s = Shape::Triangle {
+                x1,
+                y1,
+                x2,
+                y2,
+                x3,
+                y3,
+            };
+            if s.triangle_valid(e) {
+                *self = s;
+                return;
+            }
+        }
+    }
+
     /// Applies the direction constraint, if any, to rotated ellipses and
     /// curves.
     fn orient(&mut self, e: &Env) {
@@ -424,6 +513,36 @@ impl Shape {
             }
             _ => {}
         }
+    }
+
+    /// Whether a triangle has no angle under 15 degrees and, under a
+    /// direction constraint, is an arrowhead at least MIN_ORIENTED_ASPECT
+    /// times as long, from apex to base, as its base is wide.
+    fn triangle_valid(&self, e: &Env) -> bool {
+        let Shape::Triangle {
+            x1,
+            y1,
+            x2,
+            y2,
+            x3,
+            y3,
+        } = *self
+        else {
+            return true;
+        };
+        if !triangle_angles_valid(x1, y1, x2, y2, x3, y3) {
+            return false;
+        }
+        if !e.oriented() {
+            return true;
+        }
+        let p = [(x1, y1), (x2, y2), (x3, y3)].map(|(x, y)| (x as f64, y as f64));
+        let k = triangle_apex(&p);
+        let (a, b, c) = (p[k], p[(k + 1) % 3], p[(k + 2) % 3]);
+        // twice the area is the base times the length
+        let area2 = ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)).abs();
+        let base2 = (c.0 - b.0).powi(2) + (c.1 - b.1).powi(2);
+        area2 >= MIN_ORIENTED_ASPECT * base2
     }
 
     fn quadratic_valid(&self) -> bool {
@@ -516,7 +635,7 @@ impl Shape {
                 raster::sample_polygon(&points, w, h, lines);
             }
             Shape::Quadratic { .. } => {
-                // Curves are half a pixel wide, too thin to search without
+                // Curves can be half a pixel wide, too thin to search without
                 // anti-aliasing. Offset 0.5 as in rendering centers the
                 // shape's point (x, y) on pixel (x, y); Go used 0, off by
                 // half a pixel.
@@ -820,7 +939,17 @@ fn rotate(x: f64, y: f64, theta: f64) -> (f64, f64) {
     (x * cos - y * sin, x * sin + y * cos)
 }
 
-fn triangle_valid(x1: i32, y1: i32, x2: i32, y2: i32, x3: i32, y3: i32) -> bool {
+/// The apex of a triangle as an arrowhead: the vertex opposite the
+/// shortest side, which has the sharpest angle.
+fn triangle_apex(p: &[(f64, f64); 3]) -> usize {
+    let side = |k: usize| {
+        let (b, c) = (p[(k + 1) % 3], p[(k + 2) % 3]);
+        (c.0 - b.0).powi(2) + (c.1 - b.1).powi(2)
+    };
+    (0..3).min_by(|&i, &j| side(i).total_cmp(&side(j))).unwrap()
+}
+
+fn triangle_angles_valid(x1: i32, y1: i32, x2: i32, y2: i32, x3: i32, y3: i32) -> bool {
     const MIN_DEGREES: f64 = 15.0;
     let angle = |ax: i32, ay: i32, bx: i32, by: i32, cx: i32, cy: i32| {
         let (x1, y1) = ((bx - ax) as f64, (by - ay) as f64);
@@ -920,6 +1049,95 @@ mod tests {
         }
         assert_eq!(Shape::decode(&[]), None);
         assert_eq!(Shape::decode(&[1.0, 2.0]), None);
+    }
+
+    #[test]
+    fn arrowheads_point_along_the_direction() {
+        use crate::constraints::Options;
+        let (w, h) = (64, 48);
+        let toward = Options {
+            focus: Some((0.25, 0.75)),
+            angle: None,
+            min_size: 0.0,
+            max_size: 0.0,
+            region: None,
+        };
+        let along = Options {
+            focus: None,
+            angle: Some(-120.0),
+            ..toward
+        };
+        let mut rnd = Rng::new(5);
+        for opts in [toward, along] {
+            let c = Constraints::new(&opts, w as usize, h as usize).unwrap();
+            let mut e = Env {
+                w,
+                h,
+                rnd: &mut rnd,
+                constraints: Some(&c),
+            };
+            for _ in 0..300 {
+                let mut s = Shape::random(ShapeType::Triangle, &mut e);
+                for _ in 0..10 {
+                    s.mutate(&mut e);
+                }
+                let Shape::Triangle {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    x3,
+                    y3,
+                } = s
+                else {
+                    unreachable!()
+                };
+                assert!(s.triangle_valid(&e), "{s:?}");
+                let p = [(x1, y1), (x2, y2), (x3, y3)].map(|(x, y)| (x as f64, y as f64));
+                let k = triangle_apex(&p);
+                let (b, c) = (p[(k + 1) % 3], p[(k + 2) % 3]);
+                let (dx, dy) = (p[k].0 - (b.0 + c.0) / 2.0, p[k].1 - (b.1 + c.1) / 2.0);
+                let (cx, cy) = ((x1 + x2 + x3) as f64 / 3.0, (y1 + y2 + y3) as f64 / 3.0);
+                let (want, focus_distance) = match opts.focus {
+                    Some(_) => ((36.0 - cy).atan2(16.0 - cx), (36.0 - cy).hypot(16.0 - cx)),
+                    None => (120f64.to_radians(), f64::INFINITY),
+                };
+                let mut off = (dy.atan2(dx) - want).to_degrees().rem_euclid(360.0);
+                if off > 180.0 {
+                    off = 360.0 - off;
+                }
+                // Each rounded vertex is within 0.71 pixels of where it was
+                // turned to, which turns the apex by up to this angle, and
+                // moves the centroid, which turns the way to the focus.
+                let turn = |d: f64, at: f64| (d / at).min(1.0).asin().to_degrees();
+                let limit = turn(1.42, dx.hypot(dy)) + turn(0.71, focus_distance) + 1e-6;
+                assert!(off <= limit, "{off} > {limit}: {s:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn curve_widths_are_searched() {
+        let mut rnd = Rng::new(4);
+        let mut e = Env {
+            w: 64,
+            h: 48,
+            rnd: &mut rnd,
+            constraints: None,
+        };
+        let mut widths = vec![];
+        for _ in 0..50 {
+            let mut s = Shape::random(ShapeType::Quadratic, &mut e);
+            for _ in 0..20 {
+                s.mutate(&mut e);
+            }
+            let Shape::Quadratic { width, .. } = s else {
+                unreachable!()
+            };
+            assert!((MIN_WIDTH..=MAX_WIDTH).contains(&width), "{width}");
+            widths.push(width);
+        }
+        assert!(widths.iter().any(|&w| w < 2.0) && widths.iter().any(|&w| w > 5.0));
     }
 
     #[test]

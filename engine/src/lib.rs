@@ -12,6 +12,7 @@ pub mod constraints;
 pub mod core;
 pub mod gif;
 pub mod model;
+pub mod palette;
 pub mod raster;
 pub mod render;
 pub mod rng;
@@ -19,6 +20,7 @@ pub mod shape;
 
 use constraints::{Constraints, Options};
 use model::{Model, State};
+use palette::Palette;
 use render::{Animator, Base};
 use shape::{Shape, ShapeType};
 use std::cell::RefCell;
@@ -73,13 +75,46 @@ fn color(rgb: i32) -> Option<core::Color> {
 
 /// Starts a model of the w x h RGBA pixels in the input buffer, drawn at
 /// out_size pixels along its longest side. background is 0xRRGGBB, or -1
-/// for the image's average color. Returns the starting score.
+/// for the image's average color. If palette is more than 0, shapes only
+/// take that many colors: chosen from the image, or if given is set, the
+/// colors after the pixels in the input buffer, 3 bytes (RGB) each; an
+/// average background becomes the nearest of them. Returns the starting
+/// score.
 #[unsafe(no_mangle)]
-pub extern "C" fn init(w: usize, h: usize, out_size: usize, background: i32, seed: f64) -> f64 {
+pub extern "C" fn init(
+    w: usize,
+    h: usize,
+    out_size: usize,
+    background: i32,
+    seed: f64,
+    palette: usize,
+    given: u32,
+) -> f64 {
     with(|e| {
         let pix = e.input[..w * h * 4].to_vec();
-        let bg = color(background).unwrap_or_else(|| core::average_color(&pix));
-        let model = Model::new(pix, w, h, bg, out_size, seed as u64);
+        let palette = match (palette, given) {
+            (0, _) => None,
+            (n, 0) => Some(Palette::from_image(&pix, n)),
+            (n, _) => Palette::new(
+                e.input[w * h * 4..][..n * 3]
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|&[r, g, b]| core::Color {
+                        r: r as i32,
+                        g: g as i32,
+                        b: b as i32,
+                        a: 255,
+                    })
+                    .collect(),
+            ),
+        };
+        let bg = color(background).unwrap_or_else(|| {
+            let average = core::average_color(&pix);
+            palette.as_ref().map_or(average, |p| p.nearest(average))
+        });
+        let mut model = Model::new(pix, w, h, bg, out_size, seed as u64);
+        model.set_palette(palette);
         let score = model.score;
         e.model = Some(model);
         e.best = None;
@@ -290,4 +325,33 @@ pub extern "C" fn anim_frame(k: usize) -> *const u8 {
         };
         a.frame(m, e.counts[k]).as_ptr()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Colors given after the pixels, as the page passes them, limit the
+    // shapes' colors and the average background.
+    #[test]
+    fn init_with_given_colors() {
+        let (w, h) = (32, 24);
+        let mut input: Vec<u8> = (0..w * h)
+            .flat_map(|i| [(i % w * 8) as u8, (i / w * 10) as u8, 90, 255])
+            .collect();
+        input.extend([255, 0, 0, 0, 0, 255]);
+        with(|e| e.input = input);
+        init(w, h, 64, -1, 1.0, 2, 1);
+        for _ in 0..5 {
+            search(1, 128, 1, 1);
+            commit(0);
+        }
+        with(|e| {
+            let m = e.model.as_ref().unwrap();
+            let given = |c: &core::Color| [(255, 0, 0), (0, 0, 255)].contains(&(c.r, c.g, c.b));
+            assert!(given(&m.background));
+            assert_eq!(m.shapes.len(), 5);
+            assert!(m.colors.iter().all(given));
+        });
+    }
 }

@@ -4,6 +4,7 @@
 
 use crate::constraints::Constraints;
 use crate::core::{self, Clip, Color, Scanline};
+use crate::palette::Palette;
 use crate::raster::Rasterizer;
 use crate::render::Base;
 use crate::rng::Rng;
@@ -50,6 +51,7 @@ pub struct Model {
     clip: Option<Clip>,
     /// what renders show outside that region (see keep_outside)
     pub base: Option<Base>,
+    palette: Option<Palette>,
     worker: Worker,
 }
 
@@ -104,6 +106,7 @@ impl Model {
             constraints: None,
             clip: None,
             base: None,
+            palette: None,
             worker: Worker {
                 buffer: vec![0; w * h * 4],
                 lines: Vec::with_capacity(4096),
@@ -120,7 +123,8 @@ impl Model {
 
     /// Keeps the target image outside a region and puts shapes only inside
     /// it: the picture starts as the target outside and as background
-    /// inside (the average color there if None), and shapes are clipped to
+    /// inside (the average color there, or the palette's nearest, if None),
+    /// and shapes are clipped to
     /// the region. mask is one byte per working pixel, 128 and up inside.
     /// Renders show the target outside, scaled up, unless base is replaced
     /// with a sharper image.
@@ -135,7 +139,7 @@ impl Model {
                 }
                 count += 1;
             }
-            match count {
+            let average = match count {
                 0 => self.background,
                 _ => Color {
                     r: (sum[0] / count) as i32,
@@ -143,7 +147,10 @@ impl Model {
                     b: (sum[2] / count) as i32,
                     a: 255,
                 },
-            }
+            };
+            self.palette
+                .as_ref()
+                .map_or(average, |p| p.nearest(average))
         });
         for i in 0..n {
             let p = &mut self.current[i * 4..i * 4 + 4];
@@ -176,6 +183,12 @@ impl Model {
         }
     }
 
+    /// Limits the colors of shapes added from now on to a palette. Models
+    /// that replay each other's shapes need the same palette.
+    pub fn set_palette(&mut self, p: Option<Palette>) {
+        self.palette = p;
+    }
+
     fn env(&mut self) -> Env<'_> {
         Env {
             w: self.w as i32,
@@ -194,7 +207,9 @@ impl Model {
         let (w, h) = (self.w, self.h);
         let wk = &mut self.worker;
         let lines = &wk.lines;
-        let color = core::compute_color(&self.target, &self.current, w, lines, state.alpha);
+        let palette = self.palette.as_ref();
+        let color =
+            core::compute_color(&self.target, &self.current, w, lines, state.alpha, palette);
         core::copy_lines(&mut wk.buffer, &self.current, w, lines);
         core::draw_lines(&mut wk.buffer, w, color, lines);
         let mut energy = core::difference_partial(
@@ -327,7 +342,8 @@ impl Model {
         let (w, h) = (self.w, self.h);
         let wk = &mut self.worker;
         let lines = &wk.lines;
-        let color = core::compute_color(&self.target, &self.current, w, lines, alpha);
+        let palette = self.palette.as_ref();
+        let color = core::compute_color(&self.target, &self.current, w, lines, alpha, palette);
         // the buffer keeps the pixels from before the shape for scoring
         core::copy_lines(&mut wk.buffer, &self.current, w, lines);
         core::draw_lines(&mut self.current, w, color, lines);
@@ -491,6 +507,30 @@ mod tests {
         }
         assert!(searcher.shapes.len() >= 10);
         assert_eq!(follower.score, searcher.score);
+        assert!(follower.current == searcher.current);
+        assert_eq!(follower.svg(), searcher.svg());
+    }
+
+    // With a palette, shapes take only its colors, and replays still match.
+    #[test]
+    fn palette_colors_only() {
+        let mut searcher = test_model(6);
+        let mut follower = test_model(7);
+        let palette = Palette::from_image(&searcher.target, 4);
+        searcher.set_palette(Some(palette.clone()));
+        follower.set_palette(Some(palette.clone()));
+        for _ in 0..10 {
+            let s = searcher.search(ShapeType::Any, 0, 2);
+            for s in searcher.commit(s, 1) {
+                let mut v = vec![];
+                s.shape.encode(&mut v);
+                follower.add(Shape::decode(&v).unwrap().0, s.alpha);
+            }
+        }
+        let rgb = |c: &Color| (c.r, c.g, c.b);
+        let allowed: Vec<_> = palette.colors().iter().map(rgb).collect();
+        assert!(allowed.len() == 4);
+        assert!(searcher.colors.iter().all(|c| allowed.contains(&rgb(c))));
         assert!(follower.current == searcher.current);
         assert_eq!(follower.svg(), searcher.svg());
     }

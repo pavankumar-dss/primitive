@@ -100,10 +100,10 @@
         <button type="button" class="link" id="c-focus-reset">Center it</button></p>
       <label class="field" id="c-angle-field" hidden>
         <span>Angle <output id="c-angle-out">45°</output></span>
-        <input type="range" id="c-angle" min="0" max="179" value="45">
+        <input type="range" id="c-angle" min="0" max="359" value="45">
       </label>
-      <p class="hint warn" id="c-direction-warn" hidden>Direction applies to rotated rectangles, rotated ellipses
-        and Bézier curves. <button type="button" class="link" id="c-switch">Use rotated rectangles</button></p>
+      <p class="hint warn" id="c-direction-warn" hidden>Direction applies to triangles (as arrowheads), rotated
+        rectangles, rotated ellipses and Bézier curves. <button type="button" class="link" id="c-switch">Use rotated rectangles</button></p>
       <label class="field">
         <span>Smallest shape <output id="c-min-out">any</output></span>
         <input type="range" id="c-min" min="0" max="50" value="0">
@@ -174,6 +174,23 @@
           <label class="check"><input type="checkbox" id="bg-auto" checked> Average color</label>
           <input type="color" id="bg" value="#ffffff" disabled aria-label="Background color">
         </div>
+      </div>
+      <label class="field">
+        <span>Colors</span>
+        <select id="palette">
+          <option value="" selected>Any</option>
+          <option value="2">2 from the image</option>
+          <option value="4">4 from the image</option>
+          <option value="8">8 from the image</option>
+          <option value="16">16 from the image</option>
+          <option value="custom">My own</option>
+        </select>
+      </label>
+      <div class="palette-custom" id="palette-custom" hidden>
+        <input type="text" id="palette-colors" value="264653, 2a9d8f, e9c46a, f4a261, e76f51" spellcheck="false"
+          aria-label="Your colors, as hex codes">
+        <div class="swatches" id="palette-swatches"></div>
+        <p class="hint" id="palette-hint">Hex codes, separated by commas or spaces.</p>
       </div>
     </details>
 

@@ -39,6 +39,7 @@ Small input images should be used (like 256x256px). You don't need the detail an
 | `s` | 1024 | output image size |
 | `a` | 128 | color alpha (use `0` to let the algorithm choose alpha for each shape) |
 | `bg` | avg | starting background color (hex) |
+| `palette` | off | limit shape colors to a palette: a number of colors chosen from the image (e.g. `8`), or hex colors (e.g. `264653,e9c46a,e76f51`); the average background becomes the nearest of them |
 | `j` | 0 | number of parallel workers (default uses all cores, up to 16) |
 | `focus` | off | point oriented shapes toward `x,y` (fractions of width and height, e.g. `0.6,0.7`) |
 | `angle` | off | point oriented shapes along this angle (degrees counterclockwise from horizontal) |
@@ -105,7 +106,7 @@ The same effect is built in:
 
 Available constraints, on the command line and on the website (under "Constraints"):
 
-- **Direction** (`-focus` or `-angle`): rotated rectangles, rotated ellipses and Bézier curves point toward a spot or along a fixed angle. Rectangles and ellipses are kept at least twice as long as they are wide, so their direction shows.
+- **Direction** (`-focus` or `-angle`): triangles, rotated rectangles, rotated ellipses and Bézier curves point toward a spot or along a fixed angle. Rectangles and ellipses are kept at least twice as long as they are wide, so their direction shows, and triangles become arrowheads at least twice as long as their base, with the tip pointing toward the spot or along the angle.
 - **Size** (`-minsize`, `-maxsize`): only small shapes for a mosaic look, or only large ones for bolder abstraction.
 - **Region** (`-region mask.png`): shapes only go where the mask is white (up to 10% of a shape may spill over); everything else stays the background color. Add `-keep` to keep the original image around the region instead: shapes are then clipped to it, so a subject can be converted while its photo background stays (or, with an inverted mask, the other way around). On the website you paint the region onto the image, or click the subject and let [SlimSAM](https://github.com/czg1225/SlimSAM), a small version of Segment Anything, select it. That runs in your browser too, from about 28 MB of model files the site downloads the first time.
 
@@ -137,7 +138,7 @@ The following primitives are supported:
 - Ellipse (axis-aligned)
 - Circle
 - Rotated Rectangle
-- Bézier curve (quadratic)
+- Bézier curve (quadratic, from half a pixel to 8 working pixels wide)
 - Rotated Ellipse
 - Polygon (four points)
 - Combo (a mix of all of the above in a single image)

@@ -72,7 +72,9 @@ fn writes_every_format() {
     let jpg = image::open(dir.path("out.jpg")).unwrap();
     assert_eq!((jpg.width(), jpg.height()), (240, 161));
     let svg = std::fs::read_to_string(dir.path("out.svg")).unwrap();
-    assert!(svg.starts_with("<svg") && svg.matches("fill-opacity").count() >= 12);
+    // curves are strokes, the other shapes fills
+    let shapes = svg.matches("fill-opacity").count() + svg.matches("stroke-opacity").count();
+    assert!(svg.starts_with("<svg") && shapes >= 12);
     let gif = std::fs::read(dir.path("out.gif")).unwrap();
     assert!(gif.starts_with(b"GIF89a"));
     image::load_from_memory(&gif).unwrap();
@@ -200,6 +202,31 @@ fn keeps_the_image_outside_the_region() {
             .max()
             .unwrap();
         assert!(diff <= 3, "({x}, {y}): {a:?} vs {b:?}");
+    }
+}
+
+#[test]
+fn palette() {
+    let dir = TempDir::new("palette");
+    let input = write_input(&dir);
+    let out = primitive()
+        .args([
+            "-i", &input, "-o", "-", "-n", "15", "-m", "0", "-r", "60", "-j", "3",
+        ])
+        .args(["-palette", "1e1450,e0b43c,40b43c"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // the background and every shape, filled or stroked, take those colors
+    let svg = String::from_utf8(out.stdout).unwrap();
+    let colors: Vec<&str> = svg.split("=\"#").skip(1).map(|s| &s[..6]).collect();
+    assert!(colors.len() >= 16, "{svg}");
+    for c in colors {
+        assert!(["1e1450", "e0b43c", "40b43c"].contains(&c), "{c}");
     }
 }
 
