@@ -72,7 +72,9 @@ fn writes_every_format() {
     let jpg = image::open(dir.path("out.jpg")).unwrap();
     assert_eq!((jpg.width(), jpg.height()), (240, 161));
     let svg = std::fs::read_to_string(dir.path("out.svg")).unwrap();
-    assert!(svg.starts_with("<svg") && svg.matches("fill-opacity").count() >= 12);
+    // curves are strokes, the other shapes fills
+    let shapes = svg.matches("fill-opacity").count() + svg.matches("stroke-opacity").count();
+    assert!(svg.starts_with("<svg") && shapes >= 12);
     let gif = std::fs::read(dir.path("out.gif")).unwrap();
     assert!(gif.starts_with(b"GIF89a"));
     image::load_from_memory(&gif).unwrap();

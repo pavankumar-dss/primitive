@@ -136,7 +136,7 @@ The following primitives are supported:
 - Ellipse (axis-aligned)
 - Circle
 - Rotated Rectangle
-- Bézier curve (quadratic)
+- Bézier curve (quadratic, from half a pixel to 8 working pixels wide)
 - Rotated Ellipse
 - Polygon (four points)
 - Combo (a mix of all of the above in a single image)

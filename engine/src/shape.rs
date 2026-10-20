@@ -116,6 +116,13 @@ impl Env<'_> {
 /// Points of a triangle or polygon may lie this far outside the image.
 const MARGIN: i32 = 16;
 
+/// Curve widths in working pixels, from the half pixel that Go always used
+/// (its width mutation was never reached) to a broad brush stroke. Wider
+/// curves still score a little better, but look like blobs rather than
+/// strokes.
+const MIN_WIDTH: f64 = 0.5;
+const MAX_WIDTH: f64 = 8.0;
+
 impl Shape {
     pub fn random(t: ShapeType, e: &mut Env) -> Shape {
         let (w, h) = (e.w, e.h);
@@ -184,6 +191,7 @@ impl Shape {
                 let y2 = y1 + e.rnd.float() * 40.0 - 20.0;
                 let x3 = x2 + e.rnd.float() * 40.0 - 20.0;
                 let y3 = y2 + e.rnd.float() * 40.0 - 20.0;
+                let width = MIN_WIDTH + e.rnd.float() * (MAX_WIDTH - MIN_WIDTH);
                 Shape::Quadratic {
                     x1,
                     y1,
@@ -191,7 +199,7 @@ impl Shape {
                     y2,
                     x3,
                     y3,
-                    width: 0.5,
+                    width,
                 }
             }
             ShapeType::RotatedEllipse => {
@@ -323,13 +331,18 @@ impl Shape {
                     y2,
                     x3,
                     y3,
-                    ..
+                    width,
                 } = self
                 {
-                    let (x, y) = match e.rnd.intn(3) {
+                    let (x, y) = match e.rnd.intn(4) {
                         0 => (x1, y1),
                         1 => (x2, y2),
-                        _ => (x3, y3),
+                        2 => (x3, y3),
+                        _ => {
+                            // the points stay put, so the curve stays valid
+                            *width = (*width + e.rnd.norm()).clamp(MIN_WIDTH, MAX_WIDTH);
+                            break;
+                        }
                     };
                     *x = (*x + e.rnd.norm() * 16.0).clamp(-m as f64, (w - 1 + m) as f64);
                     *y = (*y + e.rnd.norm() * 16.0).clamp(-m as f64, (h - 1 + m) as f64);
@@ -516,7 +529,7 @@ impl Shape {
                 raster::sample_polygon(&points, w, h, lines);
             }
             Shape::Quadratic { .. } => {
-                // Curves are half a pixel wide, too thin to search without
+                // Curves can be half a pixel wide, too thin to search without
                 // anti-aliasing. Offset 0.5 as in rendering centers the
                 // shape's point (x, y) on pixel (x, y); Go used 0, off by
                 // half a pixel.
@@ -920,6 +933,30 @@ mod tests {
         }
         assert_eq!(Shape::decode(&[]), None);
         assert_eq!(Shape::decode(&[1.0, 2.0]), None);
+    }
+
+    #[test]
+    fn curve_widths_are_searched() {
+        let mut rnd = Rng::new(4);
+        let mut e = Env {
+            w: 64,
+            h: 48,
+            rnd: &mut rnd,
+            constraints: None,
+        };
+        let mut widths = vec![];
+        for _ in 0..50 {
+            let mut s = Shape::random(ShapeType::Quadratic, &mut e);
+            for _ in 0..20 {
+                s.mutate(&mut e);
+            }
+            let Shape::Quadratic { width, .. } = s else {
+                unreachable!()
+            };
+            assert!((MIN_WIDTH..=MAX_WIDTH).contains(&width), "{width}");
+            widths.push(width);
+        }
+        assert!(widths.iter().any(|&w| w < 2.0) && widths.iter().any(|&w| w > 5.0));
     }
 
     #[test]
