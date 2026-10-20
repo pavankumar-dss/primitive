@@ -255,59 +255,81 @@ fn arc_segments(r: f64) -> usize {
     ((2.0 * PI / step).ceil() as usize).clamp(6, 256)
 }
 
-/// The pixels of a w x h image whose coordinates lie inside the polygon,
-/// under the nonzero rule (as SVG fills it), into lines (cleared first).
-/// Pixel (px, py) is inside when the point (px, py) is: like the other
-/// shapes' search rasterizers, this leaves out partly covered pixels.
+/// The pixels of a w x h image whose coordinates lie inside the polygon
+/// (of at most 8 points), under the nonzero rule (as SVG fills it), into
+/// lines (cleared first). Pixel (px, py) is inside when the point (px, py)
+/// is: like the other shapes' search rasterizers, this leaves out partly
+/// covered pixels.
 pub fn sample_polygon(points: &[(f64, f64)], w: i32, h: i32, lines: &mut Vec<Scanline>) {
+    const MAX: usize = 8;
+    assert!(points.len() <= MAX, "too many points");
     lines.clear();
+    // each edge covers rows y with top <= y < bottom, so shared vertices
+    // count once: (top, bottom, x at top, dx/dy, direction)
+    let mut edges = [(0.0, 0.0, 0.0, 0.0, 0); MAX];
+    let mut n = 0;
     let (mut miny, mut maxy) = (f64::MAX, f64::MIN);
-    for p in points {
-        miny = miny.min(p.1);
-        maxy = maxy.max(p.1);
+    for (i, &a) in points.iter().enumerate() {
+        let b = points[(i + 1) % points.len()];
+        if a.1 == b.1 {
+            continue;
+        }
+        let (top, bottom, dir) = if a.1 < b.1 { (a, b, 1) } else { (b, a, -1) };
+        let slope = (bottom.0 - top.0) / (bottom.1 - top.1);
+        edges[n] = (top.1, bottom.1, top.0, slope, dir);
+        n += 1;
+        miny = miny.min(top.1);
+        maxy = maxy.max(bottom.1);
     }
     let y1 = (miny.ceil().max(0.0) as i32).min(h);
-    let y2 = (maxy.floor() as i32).min(h - 1);
-    let mut crossings: Vec<(f64, i32)> = Vec::with_capacity(points.len());
+    let y2 = (maxy.ceil() as i32).min(h) - 1;
+    // the pixels with start <= px < end
+    let mut push = |y: i32, start: f64, end: f64| {
+        let x1 = (start.ceil().max(0.0) as i32).min(w);
+        let x2 = (end.ceil() as i32).min(w) - 1;
+        if x1 <= x2 {
+            lines.push(Scanline {
+                y,
+                x1,
+                x2,
+                alpha: 0xffff,
+            });
+        }
+    };
+    let mut crossings = [(0.0, 0); MAX];
     for py in y1..=y2 {
         let y = py as f64;
-        crossings.clear();
-        for (i, &(ax, ay)) in points.iter().enumerate() {
-            let (bx, by) = points[(i + 1) % points.len()];
-            // each edge covers [min y, max y), so shared vertices count once
-            if (ay <= y && y < by) || (by <= y && y < ay) {
-                let x = ax + (y - ay) * (bx - ax) / (by - ay);
-                crossings.push((x, if by > ay { 1 } else { -1 }));
+        let mut k = 0;
+        for &(top, bottom, x, slope, dir) in &edges[..n] {
+            if top <= y && y < bottom {
+                crossings[k] = (x + (y - top) * slope, dir);
+                k += 1;
             }
+        }
+        let crossings = &mut crossings[..k];
+        if k == 2 {
+            // always, for convex shapes: the two crossings wind oppositely
+            let (a, b) = (crossings[0].0, crossings[1].0);
+            push(py, a.min(b), a.max(b));
+            continue;
         }
         // insertion sort: there are only a few (and it keeps the
         // WebAssembly smaller than the standard library's sort)
-        for i in 1..crossings.len() {
+        for i in 1..k {
             let mut j = i;
             while j > 0 && crossings[j - 1].0 > crossings[j].0 {
                 crossings.swap(j - 1, j);
                 j -= 1;
             }
         }
-        let mut winding = 0;
-        let mut start = 0.0;
-        for &(x, dir) in &crossings {
+        let (mut winding, mut start) = (0, 0.0);
+        for &(x, dir) in crossings.iter() {
             if winding == 0 {
                 start = x;
             }
             winding += dir;
             if winding == 0 {
-                // the pixels with start <= px < x
-                let x1 = (start.ceil().max(0.0) as i32).min(w);
-                let x2 = (x.ceil() as i32).min(w) - 1;
-                if x1 <= x2 {
-                    lines.push(Scanline {
-                        y: py,
-                        x1,
-                        x2,
-                        alpha: 0xffff,
-                    });
-                }
+                push(py, start, x);
             }
         }
     }

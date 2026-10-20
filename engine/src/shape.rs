@@ -459,8 +459,8 @@ impl Shape {
                 x3,
                 y3,
             } => {
-                rasterize_triangle(x1, y1, x2, y2, x3, y3, lines);
-                crop_scanlines(lines, w, h);
+                let p = |x: i32, y: i32| (x as f64, y as f64);
+                raster::sample_polygon(&[p(x1, y1), p(x2, y2), p(x3, y3)], w, h, lines);
             }
             Shape::Rectangle { .. } => {
                 let (x1, y1, x2, y2) = self.rectangle_bounds();
@@ -501,13 +501,9 @@ impl Shape {
                     }
                 }
             }
-            Shape::RotatedRectangle {
-                x,
-                y,
-                sx,
-                sy,
-                angle,
-            } => rasterize_rotated_rectangle(x, y, sx, sy, angle, w, h, lines),
+            Shape::RotatedRectangle { .. } => {
+                raster::sample_polygon(&self.rotated_rectangle_corners(), w, h, lines);
+            }
             Shape::RotatedEllipse {
                 x,
                 y,
@@ -528,6 +524,28 @@ impl Shape {
                 r.fill(w, h, lines);
             }
         }
+    }
+
+    fn rotated_rectangle_corners(&self) -> [(f64, f64); 4] {
+        let Shape::RotatedRectangle {
+            x,
+            y,
+            sx,
+            sy,
+            angle,
+        } = *self
+        else {
+            unreachable!()
+        };
+        let (sx, sy, a) = (
+            sx as f64 / 2.0,
+            sy as f64 / 2.0,
+            (angle as f64).to_radians(),
+        );
+        [(-sx, -sy), (sx, -sy), (sx, sy), (-sx, sy)].map(|(dx, dy)| {
+            let (rx, ry) = rotate(dx, dy, a);
+            (x as f64 + rx, y as f64 + ry)
+        })
     }
 
     fn rectangle_bounds(&self) -> (i32, i32, i32, i32) {
@@ -557,31 +575,19 @@ impl Shape {
                 ]);
             }
             Shape::Rectangle { .. } => {
+                // pixels x1 to x2 inclusive, centered on their coordinates
                 let (x1, y1, x2, y2) = self.rectangle_bounds();
-                let (x1, y1, x2, y2) = (x1 as f64, y1 as f64, (x2 + 1) as f64, (y2 + 1) as f64);
+                let (x1, y1) = (x1 as f64 - 0.5, y1 as f64 - 0.5);
+                let (x2, y2) = (x2 as f64 + 0.5, y2 as f64 + 0.5);
                 r.polygon(&[t(x1, y1), t(x2, y1), t(x2, y2), t(x1, y2)]);
             }
             Shape::Ellipse { x, y, rx, ry, .. } => {
                 let (cx, cy) = t(x as f64, y as f64);
                 r.ellipse(cx, cy, rx as f64 * scale, ry as f64 * scale, 0.0);
             }
-            Shape::RotatedRectangle {
-                x,
-                y,
-                sx,
-                sy,
-                angle,
-            } => {
-                let (sx, sy, a) = (
-                    sx as f64 / 2.0,
-                    sy as f64 / 2.0,
-                    (angle as f64).to_radians(),
-                );
-                let p = |dx: f64, dy: f64| {
-                    let (rx, ry) = rotate(dx, dy, a);
-                    t(x as f64 + rx, y as f64 + ry)
-                };
-                r.polygon(&[p(-sx, -sy), p(sx, -sy), p(sx, sy), p(-sx, sy)]);
+            Shape::RotatedRectangle { .. } => {
+                let c = self.rotated_rectangle_corners();
+                r.polygon(&c.map(|(x, y)| t(x, y)));
             }
             Shape::Quadratic {
                 x1,
@@ -631,7 +637,9 @@ impl Shape {
                 let (w, h) = (x2 - x1 + 1, y2 - y1 + 1);
                 write!(
                     out,
-                    "<rect {attrs} x=\"{x1}\" y=\"{y1}\" width=\"{w}\" height=\"{h}\" />"
+                    "<rect {attrs} x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" />",
+                    x = x1 as f64 - 0.5,
+                    y = y1 as f64 - 0.5
                 )
             }
             Shape::Ellipse { x, y, rx, ry, .. } => {
@@ -840,142 +848,6 @@ fn polygon_convex(x: &[f64; 4], y: &[f64; 4]) -> bool {
         }
     }
     true
-}
-
-fn crop_scanlines(lines: &mut Vec<Scanline>, w: i32, h: i32) {
-    lines.retain_mut(|l| {
-        if l.y < 0 || l.y >= h || l.x1 >= w || l.x2 < 0 {
-            return false;
-        }
-        l.x1 = l.x1.clamp(0, w - 1);
-        l.x2 = l.x2.clamp(0, w - 1);
-        l.x1 <= l.x2
-    });
-}
-
-fn rasterize_triangle(
-    mut x1: i32,
-    mut y1: i32,
-    mut x2: i32,
-    mut y2: i32,
-    mut x3: i32,
-    mut y3: i32,
-    buf: &mut Vec<Scanline>,
-) {
-    if y1 > y3 {
-        (x1, x3, y1, y3) = (x3, x1, y3, y1);
-    }
-    if y1 > y2 {
-        (x1, x2, y1, y2) = (x2, x1, y2, y1);
-    }
-    if y2 > y3 {
-        (x2, x3, y2, y3) = (x3, x2, y3, y2);
-    }
-    if y2 == y3 {
-        triangle_bottom(x1, y1, x2, y2, x3, y3, buf);
-    } else if y1 == y2 {
-        triangle_top(x1, y1, x2, y2, x3, y3, buf);
-    } else {
-        let x4 = x1 + ((y2 - y1) as f64 / (y3 - y1) as f64 * (x3 - x1) as f64) as i32;
-        triangle_bottom(x1, y1, x2, y2, x4, y2, buf);
-        triangle_top(x2, y2, x4, y2, x3, y3, buf);
-    }
-}
-
-fn triangle_bottom(x1: i32, y1: i32, x2: i32, y2: i32, x3: i32, y3: i32, buf: &mut Vec<Scanline>) {
-    let s1 = (x2 - x1) as f64 / (y2 - y1) as f64;
-    let s2 = (x3 - x1) as f64 / (y3 - y1) as f64;
-    let (mut ax, mut bx) = (x1 as f64, x1 as f64);
-    for y in y1..=y2 {
-        let (a, b) = (ax as i32, bx as i32);
-        ax += s1;
-        bx += s2;
-        buf.push(Scanline {
-            y,
-            x1: a.min(b),
-            x2: a.max(b),
-            alpha: 0xffff,
-        });
-    }
-}
-
-fn triangle_top(x1: i32, y1: i32, x2: i32, y2: i32, x3: i32, y3: i32, buf: &mut Vec<Scanline>) {
-    let s1 = (x3 - x1) as f64 / (y3 - y1) as f64;
-    let s2 = (x3 - x2) as f64 / (y3 - y2) as f64;
-    let (mut ax, mut bx) = (x3 as f64, x3 as f64);
-    let mut y = y3;
-    while y > y1 {
-        ax -= s1;
-        bx -= s2;
-        let (a, b) = (ax as i32, bx as i32);
-        buf.push(Scanline {
-            y,
-            x1: a.min(b),
-            x2: a.max(b),
-            alpha: 0xffff,
-        });
-        y -= 1;
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn rasterize_rotated_rectangle(
-    x: i32,
-    y: i32,
-    sx: i32,
-    sy: i32,
-    angle: i32,
-    w: i32,
-    h: i32,
-    lines: &mut Vec<Scanline>,
-) {
-    let (sx, sy) = (sx as f64, sy as f64);
-    let a = (angle as f64).to_radians();
-    let corner = |dx: f64, dy: f64| {
-        let (rx, ry) = rotate(dx, dy, a);
-        (rx as i32 + x, ry as i32 + y)
-    };
-    let c = [
-        corner(-sx / 2.0, -sy / 2.0),
-        corner(sx / 2.0, -sy / 2.0),
-        corner(sx / 2.0, sy / 2.0),
-        corner(-sx / 2.0, sy / 2.0),
-    ];
-    let miny = c.iter().map(|p| p.1).min().unwrap();
-    let maxy = c.iter().map(|p| p.1).max().unwrap();
-    let n = (maxy - miny + 1) as usize;
-    let mut min = vec![w; n];
-    let mut max = vec![0; n];
-    for i in 0..4 {
-        let (x0, y0) = (c[i].0 as f64, c[i].1 as f64);
-        let (dx, dy) = (
-            (c[(i + 1) % 4].0 - c[i].0) as f64,
-            (c[(i + 1) % 4].1 - c[i].1) as f64,
-        );
-        let count = ((dx * dx + dy * dy).sqrt() as i32) * 2;
-        for j in 0..count {
-            let t = j as f64 / (count - 1) as f64;
-            let xi = (x0 + dx * t) as i32;
-            let yi = ((y0 + dy * t) as i32 - miny) as usize;
-            min[yi] = min[yi].min(xi);
-            max[yi] = max[yi].max(xi);
-        }
-    }
-    for i in 0..n {
-        let y = miny + i as i32;
-        if y < 0 || y >= h {
-            continue;
-        }
-        let (a, b) = (min[i].max(0), max[i].min(w - 1));
-        if b >= a {
-            lines.push(Scanline {
-                y,
-                x1: a,
-                x2: b,
-                alpha: 0xffff,
-            });
-        }
-    }
 }
 
 /// The pixels whose coordinates lie inside the ellipse, one line per row.
