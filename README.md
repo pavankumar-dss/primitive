@@ -104,7 +104,7 @@ The same effect is built in:
 
 Available constraints, on the command line and on the website (under "Constraints"):
 
-- **Direction** (`-focus` or `-angle`): rotated rectangles, rotated ellipses and Bézier curves point toward a spot or along a fixed angle. Rectangles and ellipses are kept at least twice as long as they are wide, so their direction shows.
+- **Direction** (`-focus` or `-angle`): triangles, rotated rectangles, rotated ellipses and Bézier curves point toward a spot or along a fixed angle. Rectangles and ellipses are kept at least twice as long as they are wide, so their direction shows, and triangles become arrowheads at least twice as long as their base, with the tip pointing toward the spot or along the angle.
 - **Size** (`-minsize`, `-maxsize`): only small shapes for a mosaic look, or only large ones for bolder abstraction.
 - **Region** (`-region mask.png`): shapes only go where the mask is white (up to 10% of a shape may spill over); everything else stays the background color. On the website you paint the region onto the image.
 

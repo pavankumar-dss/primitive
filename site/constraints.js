@@ -17,7 +17,7 @@ const constraintsUI = (() => {
     clear: $('c-clear'), invert: $('c-invert'),
     tools: $('tools'), toolButtons: [...document.querySelectorAll('[data-tool]')],
   };
-  const ORIENTED_MODES = ['0', '5', '6', '7']; // combo, rotated rect, Bézier, rotated ellipse
+  const ORIENTED_MODES = ['0', '1', '5', '6', '7']; // combo, triangle, rotated rect, Bézier, rotated ellipse
   const MASK_SIZE = 512;
 
   let focus = { x: 0.5, y: 0.5 };

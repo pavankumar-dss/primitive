@@ -5,8 +5,9 @@ use crate::core::Scanline;
 /// The fraction of a shape allowed outside the region.
 const REGION_TOLERANCE: f64 = 0.1;
 
-/// The smallest length-to-width ratio of rectangles and ellipses under a
-/// direction constraint; rounder shapes show no direction.
+/// The smallest length-to-width ratio of rectangles, ellipses and
+/// arrowhead triangles under a direction constraint; rounder shapes show
+/// no direction.
 pub const MIN_ORIENTED_ASPECT: f64 = 2.0;
 
 #[derive(Clone, Default)]
@@ -65,8 +66,14 @@ impl Constraints {
         Some(c)
     }
 
+    /// Whether a direction is set.
+    pub fn oriented(&self) -> bool {
+        self.orient
+    }
+
     /// The angle in degrees that the long axis of an oriented shape
-    /// centered at (x, y) must have, if a direction is set.
+    /// centered at (x, y) must have, if a direction is set. Arrowheads
+    /// (triangles) point this way, toward the focus.
     pub fn direction(&self, x: f64, y: f64) -> Option<f64> {
         if !self.orient {
             None
