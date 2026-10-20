@@ -508,8 +508,17 @@ impl Shape {
                 sy,
                 angle,
             } => rasterize_rotated_rectangle(x, y, sx, sy, angle, w, h, lines),
+            Shape::RotatedEllipse {
+                x,
+                y,
+                rx,
+                ry,
+                angle,
+            } => rasterize_rotated_ellipse(x, y, rx, ry, angle, w, h, lines),
             _ => {
-                self.outline(r, 1.0, 0.0);
+                // offset 0.5 as in rendering, which centers the shape's
+                // point (x, y) on pixel (x, y) (Go used 0, off by half a pixel)
+                self.outline(r, 1.0, 0.5);
                 r.fill(w, h, lines);
             }
         }
@@ -963,6 +972,53 @@ fn rasterize_rotated_rectangle(
     }
 }
 
+/// The pixels whose coordinates lie inside the ellipse, one line per row.
+/// Like the other shapes' search rasterizers (and unlike Go's, which
+/// anti-aliased rotated ellipses), it leaves out partly covered pixels: with
+/// a single run per row, scoring a candidate is several times faster. The
+/// rendered shape is still anti-aliased; pixel (px, py) spans px + 0.5 ±
+/// 0.5 there, so its center is inside exactly when (px, py) is here.
+#[allow(clippy::too_many_arguments)]
+fn rasterize_rotated_ellipse(
+    x: f64,
+    y: f64,
+    rx: f64,
+    ry: f64,
+    angle: f64,
+    w: i32,
+    h: i32,
+    lines: &mut Vec<Scanline>,
+) {
+    // Point (dx, dy) from the center is inside when
+    // a dx^2 + b dx dy + c dy^2 <= 1; each row solves that for dx.
+    let (sin, cos) = angle.to_radians().sin_cos();
+    let (irx, iry) = ((rx * rx).recip(), (ry * ry).recip());
+    let a = cos * cos * irx + sin * sin * iry;
+    let b = 2.0 * sin * cos * (irx - iry);
+    let c = sin * sin * irx + cos * cos * iry;
+    let half = (rx * rx * sin * sin + ry * ry * cos * cos).sqrt();
+    let y1 = ((y - half).ceil() as i32).max(0);
+    let y2 = ((y + half).floor() as i32).min(h - 1);
+    for py in y1..=y2 {
+        let dy = py as f64 - y;
+        let disc = b * b * dy * dy - 4.0 * a * (c * dy * dy - 1.0);
+        if disc < 0.0 {
+            continue;
+        }
+        let (mid, s) = (-b * dy / (2.0 * a), disc.sqrt() / (2.0 * a));
+        let x1 = ((x + mid - s).ceil() as i32).max(0);
+        let x2 = ((x + mid + s).floor() as i32).min(w - 1);
+        if x1 <= x2 {
+            lines.push(Scanline {
+                y: py,
+                x1,
+                x2,
+                alpha: 0xffff,
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1011,6 +1067,39 @@ mod tests {
                         l.y >= 0 && l.y < 48 && l.x1 >= 0 && l.x1 <= l.x2 && l.x2 < 64,
                         "type {t}: {l:?} from {s:?}"
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rotated_ellipse_covers_the_points_inside() {
+        let mut rnd = Rng::new(3);
+        let mut r = Rasterizer::default();
+        let mut lines = vec![];
+        for _ in 0..500 {
+            let (x, y) = (rnd.float() * 80.0 - 8.0, rnd.float() * 60.0 - 6.0);
+            let (rx, ry) = (rnd.float() * 30.0 + 1.0, rnd.float() * 30.0 + 1.0);
+            let angle = rnd.float() * 720.0 - 360.0;
+            let s = Shape::RotatedEllipse {
+                x,
+                y,
+                rx,
+                ry,
+                angle,
+            };
+            s.rasterize(64, 48, &mut r, &mut lines);
+            let (sin, cos) = angle.to_radians().sin_cos();
+            for py in 0..48 {
+                for px in 0..64 {
+                    let (dx, dy) = (px as f64 - x, py as f64 - y);
+                    let (u, v) = (dx * cos + dy * sin, dy * cos - dx * sin);
+                    let d = (u / rx).powi(2) + (v / ry).powi(2);
+                    if (d - 1.0).abs() < 1e-9 {
+                        continue; // on the edge: either answer is fine
+                    }
+                    let covered = lines.iter().any(|l| l.y == py && l.x1 <= px && px <= l.x2);
+                    assert_eq!(covered, d < 1.0, "({px}, {py}) in {s:?}");
                 }
             }
         }
