@@ -39,6 +39,7 @@ Small input images should be used (like 256x256px). You don't need the detail an
 | `s` | 1024 | output image size |
 | `a` | 128 | color alpha (use `0` to let the algorithm choose alpha for each shape) |
 | `bg` | avg | starting background color (hex) |
+| `palette` | off | limit shape colors to a palette: a number of colors chosen from the image (e.g. `8`), or hex colors (e.g. `264653,e9c46a,e76f51`); the average background becomes the nearest of them |
 | `j` | 0 | number of parallel workers (default uses all cores, up to 16) |
 | `focus` | off | point oriented shapes toward `x,y` (fractions of width and height, e.g. `0.6,0.7`) |
 | `angle` | off | point oriented shapes along this angle (degrees counterclockwise from horizontal) |

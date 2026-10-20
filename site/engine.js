@@ -1,8 +1,10 @@
 // Loads the engine that runs the primitive algorithm, inside a worker: the
 // Rust port in engine/, built to engine.wasm, wrapped in this interface:
 //
-//   init(pixels, width, height, outputSize, background, constraints, seed)
-//                    → starting score; background is hex or '' for average
+//   init(pixels, width, height, outputSize, background, constraints, seed, palette)
+//                    → starting score; background is hex or '' for average;
+//                      palette is null, a number of colors to choose from
+//                      the image, or a list of hex colors
 //   search(mode, alpha, searches, fresh) → energy of the best shape so far
 //   commit(repeat)   → the shapes added (opaque, with a length), for apply
 //   apply(shapes)    → new score
@@ -20,9 +22,15 @@ async function loadEngine(module) {
   const text = (len) => new TextDecoder().decode(bytes(x.output_ptr(), len));
   let frameSize = 0;
   return {
-    init(pixels, width, height, outputSize, background, constraints, seed) {
-      put(pixels);
-      const score = x.init(width, height, outputSize, background ? parseInt(background, 16) : -1, seed);
+    init(pixels, width, height, outputSize, background, constraints, seed, palette) {
+      // given colors follow the pixels, 3 bytes each
+      const given = Array.isArray(palette) ? palette.map((hex) => parseInt(hex, 16)) : [];
+      const input = new Uint8Array(pixels.length + given.length * 3);
+      input.set(pixels);
+      given.forEach((c, k) => input.set([c >> 16 & 255, c >> 8 & 255, c & 255], pixels.length + k * 3));
+      put(input);
+      const score = x.init(width, height, outputSize, background ? parseInt(background, 16) : -1, seed,
+        given.length || palette || 0, given.length ? 1 : 0);
       if (constraints) {
         const c = constraints;
         if (c.region) put(c.region);

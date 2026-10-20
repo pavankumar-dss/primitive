@@ -4,6 +4,7 @@
 
 use crate::constraints::Constraints;
 use crate::core::{self, Color, Scanline};
+use crate::palette::Palette;
 use crate::raster::Rasterizer;
 use crate::rng::Rng;
 use crate::shape::{Env, Shape, ShapeType};
@@ -44,6 +45,7 @@ pub struct Model {
     pub shapes: Vec<Shape>,
     pub colors: Vec<Color>,
     constraints: Option<Constraints>,
+    palette: Option<Palette>,
     worker: Worker,
 }
 
@@ -96,6 +98,7 @@ impl Model {
             shapes: vec![],
             colors: vec![],
             constraints: None,
+            palette: None,
             worker: Worker {
                 buffer: vec![0; w * h * 4],
                 lines: Vec::with_capacity(4096),
@@ -107,6 +110,12 @@ impl Model {
 
     pub fn set_constraints(&mut self, c: Option<Constraints>) {
         self.constraints = c;
+    }
+
+    /// Limits the colors of shapes added from now on to a palette. Models
+    /// that replay each other's shapes need the same palette.
+    pub fn set_palette(&mut self, p: Option<Palette>) {
+        self.palette = p;
     }
 
     fn env(&mut self) -> Env<'_> {
@@ -129,7 +138,9 @@ impl Model {
             .shape
             .rasterize(w as i32, h as i32, &mut wk.raster, &mut wk.lines);
         let lines = &wk.lines;
-        let color = core::compute_color(&self.target, &self.current, w, lines, state.alpha);
+        let palette = self.palette.as_ref();
+        let color =
+            core::compute_color(&self.target, &self.current, w, lines, state.alpha, palette);
         core::copy_lines(&mut wk.buffer, &self.current, w, lines);
         core::draw_lines(&mut wk.buffer, w, color, lines);
         let mut energy = core::difference_partial(
@@ -262,7 +273,8 @@ impl Model {
         let wk = &mut self.worker;
         shape.rasterize(w as i32, h as i32, &mut wk.raster, &mut wk.lines);
         let lines = &wk.lines;
-        let color = core::compute_color(&self.target, &self.current, w, lines, alpha);
+        let palette = self.palette.as_ref();
+        let color = core::compute_color(&self.target, &self.current, w, lines, alpha, palette);
         // the buffer keeps the pixels from before the shape for scoring
         core::copy_lines(&mut wk.buffer, &self.current, w, lines);
         core::draw_lines(&mut self.current, w, color, lines);
@@ -412,6 +424,30 @@ mod tests {
         }
         assert!(searcher.shapes.len() >= 10);
         assert_eq!(follower.score, searcher.score);
+        assert!(follower.current == searcher.current);
+        assert_eq!(follower.svg(), searcher.svg());
+    }
+
+    // With a palette, shapes take only its colors, and replays still match.
+    #[test]
+    fn palette_colors_only() {
+        let mut searcher = test_model(6);
+        let mut follower = test_model(7);
+        let palette = Palette::from_image(&searcher.target, 4);
+        searcher.set_palette(Some(palette.clone()));
+        follower.set_palette(Some(palette.clone()));
+        for _ in 0..10 {
+            let s = searcher.search(ShapeType::Any, 0, 2);
+            for s in searcher.commit(s, 1) {
+                let mut v = vec![];
+                s.shape.encode(&mut v);
+                follower.add(Shape::decode(&v).unwrap().0, s.alpha);
+            }
+        }
+        let rgb = |c: &Color| (c.r, c.g, c.b);
+        let allowed: Vec<_> = palette.colors().iter().map(rgb).collect();
+        assert!(allowed.len() == 4);
+        assert!(searcher.colors.iter().all(|c| allowed.contains(&rgb(c))));
         assert!(follower.current == searcher.current);
         assert_eq!(follower.svg(), searcher.svg());
     }

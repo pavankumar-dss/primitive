@@ -7,6 +7,8 @@ const ui = {
   alpha: $('alpha'), alphaAuto: $('alpha-auto'),
   inputSize: $('input-size'), outputSize: $('output-size'), repeat: $('repeat'), threads: $('threads'),
   bgAuto: $('bg-auto'), bg: $('bg'), start: $('start'), stop: $('stop'), status: $('status'),
+  palette: $('palette'), paletteCustom: $('palette-custom'), paletteColors: $('palette-colors'),
+  paletteSwatches: $('palette-swatches'), paletteHint: $('palette-hint'),
   progress: $('progress'), progressBar: $('progress-bar'),
   original: $('original'), result: $('result'), resultCaption: $('result-caption'),
   dlPng: $('dl-png'), dlSvg: $('dl-svg'), replay: $('replay'), duration: $('duration'),
@@ -270,6 +272,7 @@ ui.form.addEventListener('submit', (e) => {
   const height = Math.max(1, Math.round(source.height * scale));
   try {
     job.constraints = constraintsUI.read(width, height);
+    job.palette = readPalette();
   } catch (err) {
     setStatus(err.message, true);
     return;
@@ -368,6 +371,48 @@ function fmtTime(ms) {
   const s = Math.round(ms / 1000);
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
+
+// ---------------------------------------------------------------- palette
+
+const PALETTE_HINT = 'Hex codes, separated by commas or spaces.';
+
+// Hex codes in text, as 6 lowercase digits, and the words that aren't.
+function parseColors(text) {
+  const colors = [], bad = [];
+  for (const word of text.split(/[\s,;-]+/).filter(Boolean)) {
+    const hex = word.replace(/^#/, '').toLowerCase();
+    if (/^[0-9a-f]{6}$/.test(hex)) colors.push(hex);
+    else if (/^[0-9a-f]{3}$/.test(hex)) colors.push([...hex].map((d) => d + d).join(''));
+    else bad.push(word);
+  }
+  return { colors, bad };
+}
+
+// The colors shapes may take, as engine.js init wants them: null for any,
+// a number to choose from the image, or a list of hex codes.
+function readPalette() {
+  if (ui.palette.value !== 'custom') return ui.palette.value ? +ui.palette.value : null;
+  const { colors, bad } = parseColors(ui.paletteColors.value);
+  if (bad.length || !colors.length) throw new Error('Check your colors under Advanced: ' + ui.paletteHint.textContent);
+  return colors;
+}
+
+function syncPalette() {
+  ui.paletteCustom.hidden = ui.palette.value !== 'custom';
+  const { colors, bad } = parseColors(ui.paletteColors.value);
+  ui.paletteSwatches.replaceChildren(...colors.map((c) => {
+    const swatch = document.createElement('span');
+    swatch.style.background = swatch.title = '#' + c;
+    return swatch;
+  }));
+  ui.paletteHint.textContent = bad.length ? `Not a hex code: ${bad.join(', ')}.`
+    : colors.length ? PALETTE_HINT : 'Add at least one color.';
+  ui.paletteHint.classList.toggle('warn', bad.length > 0 || !colors.length);
+}
+
+ui.palette.addEventListener('change', syncPalette);
+ui.paletteColors.addEventListener('input', syncPalette);
+syncPalette();
 
 // ---------------------------------------------------------------- threads
 

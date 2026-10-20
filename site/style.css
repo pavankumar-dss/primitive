@@ -92,7 +92,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: v
 .url-row { display: flex; gap: 8px; }
 .url-row input { flex: 1; min-width: 0; }
 
-input[type=url], select {
+input[type=url], input[type=text], select {
   font: inherit;
   color: inherit;
   background: var(--bg);
@@ -184,6 +184,9 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .picker-list li[aria-selected="true"]::after { content: "✓"; margin-left: auto; color: var(--accent); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .bg-row { display: flex; align-items: center; justify-content: space-between; }
+.palette-custom { display: flex; flex-direction: column; gap: 6px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 4px; }
+.swatches span { width: 22px; height: 22px; border-radius: 5px; border: 1px solid var(--line); }
 
 details { border-top: 1px solid var(--line); padding-top: 14px; }
 .badge { margin-left: 6px; padding: 1px 7px; border-radius: 99px; background: var(--accent); color: var(--accent-text); font-size: 11px; letter-spacing: 0; text-transform: none; }

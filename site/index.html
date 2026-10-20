@@ -165,6 +165,23 @@
           <input type="color" id="bg" value="#ffffff" disabled aria-label="Background color">
         </div>
       </div>
+      <label class="field">
+        <span>Colors</span>
+        <select id="palette">
+          <option value="" selected>Any</option>
+          <option value="2">2 from the image</option>
+          <option value="4">4 from the image</option>
+          <option value="8">8 from the image</option>
+          <option value="16">16 from the image</option>
+          <option value="custom">My own</option>
+        </select>
+      </label>
+      <div class="palette-custom" id="palette-custom" hidden>
+        <input type="text" id="palette-colors" value="264653, 2a9d8f, e9c46a, f4a261, e76f51" spellcheck="false"
+          aria-label="Your colors, as hex codes">
+        <div class="swatches" id="palette-swatches"></div>
+        <p class="hint" id="palette-hint">Hex codes, separated by commas or spaces.</p>
+      </div>
     </details>
 
     <div class="actions">

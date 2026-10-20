@@ -156,6 +156,31 @@ fn constraints_and_stdout() {
 }
 
 #[test]
+fn palette() {
+    let dir = TempDir::new("palette");
+    let input = write_input(&dir);
+    let out = primitive()
+        .args([
+            "-i", &input, "-o", "-", "-n", "15", "-m", "0", "-r", "60", "-j", "3",
+        ])
+        .args(["-palette", "1e1450,e0b43c,40b43c"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // the background and every shape, filled or stroked, take those colors
+    let svg = String::from_utf8(out.stdout).unwrap();
+    let colors: Vec<&str> = svg.split("=\"#").skip(1).map(|s| &s[..6]).collect();
+    assert!(colors.len() >= 16, "{svg}");
+    for c in colors {
+        assert!(["1e1450", "e0b43c", "40b43c"].contains(&c), "{c}");
+    }
+}
+
+#[test]
 fn reports_bad_arguments() {
     let out = primitive()
         .args(["-i", "x.png", "-n", "5"])

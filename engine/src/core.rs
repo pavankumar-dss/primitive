@@ -2,6 +2,8 @@
 //! the best color for a shape, drawing it, and scoring the result. Images
 //! are RGBA bytes, 4 per pixel, row by row.
 
+use crate::palette::Palette;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Color {
     pub r: i32,
@@ -26,13 +28,14 @@ fn offset(w: usize, x: i32, y: i32) -> usize {
 }
 
 /// The color that, drawn over current with the given alpha, best matches
-/// target on lines.
+/// target on lines; with a palette, the best of its colors.
 pub fn compute_color(
     target: &[u8],
     current: &[u8],
     w: usize,
     lines: &[Scanline],
     alpha: i32,
+    palette: Option<&Palette>,
 ) -> Color {
     let (mut rsum, mut gsum, mut bsum, mut count) = (0i64, 0i64, 0i64, 0i64);
     let a = (0x101 * 255 / alpha) as i64;
@@ -57,10 +60,29 @@ pub fn compute_color(
     if count == 0 {
         return Color::default();
     }
-    let r = ((rsum / count) as i32 >> 8).clamp(0, 255);
-    let g = ((gsum / count) as i32 >> 8).clamp(0, 255);
-    let b = ((bsum / count) as i32 >> 8).clamp(0, 255);
-    Color { r, g, b, a: alpha }
+    let best = Color {
+        r: (rsum / count) as i32 >> 8,
+        g: (gsum / count) as i32 >> 8,
+        b: (bsum / count) as i32 >> 8,
+        a: alpha,
+    };
+    if let Some(p) = palette {
+        // The squared error grows with the squared distance from the best
+        // color, equally in every channel, so the palette color nearest to
+        // it fits best, as long as the best color is not clamped first.
+        // (Drawing and scoring every palette color instead did no better,
+        // only rounding differs, and took 3 to 6 times as long.)
+        return Color {
+            a: alpha,
+            ..p.nearest(best)
+        };
+    }
+    Color {
+        r: best.r.clamp(0, 255),
+        g: best.g.clamp(0, 255),
+        b: best.b.clamp(0, 255),
+        a: alpha,
+    }
 }
 
 pub fn copy_lines(dst: &mut [u8], src: &[u8], w: usize, lines: &[Scanline]) {

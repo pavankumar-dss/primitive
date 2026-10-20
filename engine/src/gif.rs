@@ -2,6 +2,7 @@
 //! region of each frame, with unchanged pixels transparent.
 
 use crate::model::Model;
+use crate::palette::median_cut;
 use crate::render::Animator;
 
 /// Encodes the animation, fitting within max_side x max_side. delay is the
@@ -22,7 +23,7 @@ pub fn encode(
     let final_frame = Animator::new(model, max_side, false)
         .frame(model, model.shapes.len())
         .to_vec();
-    let pal = quantize(&final_frame, 255);
+    let pal = median_cut(&final_frame, 255);
     let transparent = pal.len() as u8;
     let lookup = PaletteLookup::new(&pal);
 
@@ -126,67 +127,6 @@ fn changed_rect(
         }
     }
     any.then_some((x0, y0, x1, y1))
-}
-
-/// Builds a palette of at most n colors for RGBA pixels using median cut
-/// over a 5-bit-per-channel histogram.
-fn quantize(pix: &[u8], n: usize) -> Vec<[u8; 3]> {
-    #[derive(Clone, Copy, Default)]
-    struct Bin {
-        count: u64,
-        sum: [u64; 3],  // sums of the exact colors in this bin
-        coord: [u8; 3], // 5-bit coordinates
-    }
-    let mut bins = vec![Bin::default(); 1 << 15];
-    for p in pix.as_chunks::<4>().0 {
-        let key = (p[0] as usize >> 3) << 10 | (p[1] as usize >> 3) << 5 | p[2] as usize >> 3;
-        let b = &mut bins[key];
-        b.coord = [p[0] >> 3, p[1] >> 3, p[2] >> 3];
-        b.count += 1;
-        for (sum, &v) in b.sum.iter_mut().zip(p) {
-            *sum += v as u64;
-        }
-    }
-    let all: Vec<Bin> = bins.into_iter().filter(|b| b.count > 0).collect();
-    // boxes are split along their widest channel at the weighted median
-    let mut boxes = vec![all];
-    while boxes.len() < n {
-        let mut best: Option<(usize, u8, usize)> = None; // box, range, channel
-        for (i, b) in boxes.iter().enumerate() {
-            if b.len() < 2 {
-                continue;
-            }
-            for c in 0..3 {
-                let lo = b.iter().map(|e| e.coord[c]).min().unwrap();
-                let hi = b.iter().map(|e| e.coord[c]).max().unwrap();
-                if hi - lo > best.map_or(0, |b| b.1) {
-                    best = Some((i, hi - lo, c));
-                }
-            }
-        }
-        let Some((i, _, c)) = best else { break };
-        let mut b = std::mem::take(&mut boxes[i]);
-        b.sort_by_key(|e| e.coord[c]);
-        let total: u64 = b.iter().map(|e| e.count).sum();
-        let (mut split, mut acc) = (1, 0);
-        for (j, e) in b[..b.len() - 1].iter().enumerate() {
-            acc += e.count;
-            split = j + 1;
-            if acc * 2 >= total {
-                break;
-            }
-        }
-        let rest = b.split_off(split);
-        boxes[i] = b;
-        boxes.push(rest);
-    }
-    boxes
-        .iter()
-        .map(|b| {
-            let count: u64 = b.iter().map(|e| e.count).sum();
-            std::array::from_fn(|k| (b.iter().map(|e| e.sum[k]).sum::<u64>() / count) as u8)
-        })
-        .collect()
 }
 
 /// Maps colors to their nearest palette index through a 5-bit-per-channel

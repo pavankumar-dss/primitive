@@ -20,9 +20,9 @@ async function handle(msg) {
       engine = await loadEngine(msg.module);
       return null;
     case 'init': {
-      const { pixels, width, height, background, constraints, seed } = msg;
+      const { pixels, width, height, background, constraints, seed, palette } = msg;
       // the output size only matters for rendering, which searchers never do
-      return engine.init(pixels, width, height, Math.max(width, height), background, constraints, seed);
+      return engine.init(pixels, width, height, Math.max(width, height), background, constraints, seed, palette);
     }
     case 'search':
       return engine.search(msg.mode, msg.alpha, 1, msg.fresh);
