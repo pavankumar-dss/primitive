@@ -93,6 +93,84 @@ pub fn draw_lines(im: &mut [u8], w: usize, c: Color, lines: &[Scanline]) {
     }
 }
 
+/// Like draw_lines, with each pixel's coverage also scaled by mask (one
+/// byte per pixel, 255 for full), which softens the edges of a region.
+pub fn draw_lines_masked(im: &mut [u8], w: usize, c: Color, lines: &[Scanline], mask: &[u8]) {
+    const M: u32 = 0xffff;
+    let sa = c.a as u32 * 0x101;
+    let sr = c.r as u32 * 0x101 * sa / M;
+    let sg = c.g as u32 * 0x101 * sa / M;
+    let sb = c.b as u32 * 0x101 * sa / M;
+    for line in lines {
+        let i = offset(w, line.x1, line.y);
+        let n = (line.x2 - line.x1 + 1) as usize;
+        let m = &mask[i / 4..i / 4 + n];
+        for (p, &m) in im[i..i + n * 4].as_chunks_mut::<4>().0.iter_mut().zip(m) {
+            let ma = line.alpha * m as u32 / 255;
+            let a = (M - sa * ma / M) * 0x101;
+            p[0] = (((p[0] as u32 * a + sr * ma) / M) >> 8) as u8;
+            p[1] = (((p[1] as u32 * a + sg * ma) / M) >> 8) as u8;
+            p[2] = (((p[2] as u32 * a + sb * ma) / M) >> 8) as u8;
+            p[3] = (((p[3] as u32 * a + sa * ma) / M) >> 8) as u8;
+        }
+    }
+}
+
+/// The runs of pixels inside a mask, row by row, for clipping scanlines to
+/// it.
+pub struct Clip {
+    runs: Vec<(i32, i32)>,
+    rows: Vec<usize>, // the runs in row y are runs[rows[y]..rows[y + 1]]
+}
+
+impl Clip {
+    /// The mask is one byte per pixel of a w x h image; 128 and up is inside.
+    pub fn new(mask: &[u8], w: usize, h: usize) -> Clip {
+        let mut runs = vec![];
+        let mut rows = vec![0];
+        for row in mask[..w * h].chunks(w) {
+            let mut start = None;
+            for (x, &m) in row.iter().enumerate() {
+                match (m >= 128, start) {
+                    (true, None) => start = Some(x as i32),
+                    (false, Some(s)) => {
+                        runs.push((s, x as i32 - 1));
+                        start = None;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(s) = start {
+                runs.push((s, w as i32 - 1));
+            }
+            rows.push(runs.len());
+        }
+        Clip { runs, rows }
+    }
+
+    /// Replaces lines with their parts inside the mask, using scratch as
+    /// space for the result.
+    pub fn apply(&self, lines: &mut Vec<Scanline>, scratch: &mut Vec<Scanline>) {
+        scratch.clear();
+        for l in lines.iter() {
+            let y = l.y as usize;
+            for &(a, b) in &self.runs[self.rows[y]..self.rows[y + 1]] {
+                if a > l.x2 {
+                    break;
+                }
+                if b >= l.x1 {
+                    scratch.push(Scanline {
+                        x1: a.max(l.x1),
+                        x2: b.min(l.x2),
+                        ..*l
+                    });
+                }
+            }
+        }
+        std::mem::swap(lines, scratch);
+    }
+}
+
 /// Root mean square difference of two images, from 0 to 1.
 pub fn difference_full(a: &[u8], b: &[u8]) -> f64 {
     let mut total = 0u64;
@@ -146,5 +224,35 @@ pub fn average_color(pix: &[u8]) -> Color {
         g: (g / n) as i32,
         b: (b / n) as i32,
         a: 255,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clip_keeps_the_parts_inside() {
+        // row 0: inside at 2..=3 and 6..=8; row 1: nothing; row 2: everything
+        let mask: Vec<u8> = [[0, 0, 255, 200, 0, 0, 128, 255, 255, 0], [0; 10], [255; 10]].concat();
+        let clip = Clip::new(&mask, 10, 3);
+        let line = |y, x1, x2| Scanline {
+            y,
+            x1,
+            x2,
+            alpha: 0xffff,
+        };
+        let mut lines = vec![line(0, 0, 9), line(0, 3, 6), line(1, 0, 9), line(2, 4, 5)];
+        clip.apply(&mut lines, &mut vec![]);
+        assert_eq!(
+            lines,
+            [
+                line(0, 2, 3),
+                line(0, 6, 8),
+                line(0, 3, 3),
+                line(0, 6, 6),
+                line(2, 4, 5)
+            ]
+        );
     }
 }

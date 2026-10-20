@@ -19,7 +19,7 @@ pub mod shape;
 
 use constraints::{Constraints, Options};
 use model::{Model, State};
-use render::Animator;
+use render::{Animator, Base};
 use shape::{Shape, ShapeType};
 use std::cell::RefCell;
 
@@ -61,6 +61,16 @@ pub extern "C" fn shapes_ptr() -> *const f64 {
     with(|e| e.shapes.as_ptr())
 }
 
+/// A color from 0xRRGGBB, or None for -1.
+fn color(rgb: i32) -> Option<core::Color> {
+    (rgb >= 0).then_some(core::Color {
+        r: rgb >> 16 & 255,
+        g: rgb >> 8 & 255,
+        b: rgb & 255,
+        a: 255,
+    })
+}
+
 /// Starts a model of the w x h RGBA pixels in the input buffer, drawn at
 /// out_size pixels along its longest side. background is 0xRRGGBB, or -1
 /// for the image's average color. Returns the starting score.
@@ -68,16 +78,7 @@ pub extern "C" fn shapes_ptr() -> *const f64 {
 pub extern "C" fn init(w: usize, h: usize, out_size: usize, background: i32, seed: f64) -> f64 {
     with(|e| {
         let pix = e.input[..w * h * 4].to_vec();
-        let bg = if background < 0 {
-            core::average_color(&pix)
-        } else {
-            core::Color {
-                r: background >> 16 & 255,
-                g: background >> 8 & 255,
-                b: background & 255,
-                a: 255,
-            }
-        };
+        let bg = color(background).unwrap_or_else(|| core::average_color(&pix));
         let model = Model::new(pix, w, h, bg, out_size, seed as u64);
         let score = model.score;
         e.model = Some(model);
@@ -109,6 +110,38 @@ pub extern "C" fn set_constraints(
         };
         let (w, h) = (m.w, m.h);
         m.set_constraints(Constraints::new(&opts, w, h));
+    })
+}
+
+/// Keeps the image outside a region, a byte per working pixel in the input
+/// buffer (128 and up inside), and puts shapes only inside it (see
+/// Model::keep_outside). background is 0xRRGGBB, or -1 for the region's
+/// average color. Returns the new starting score.
+#[unsafe(no_mangle)]
+pub extern "C" fn keep_outside(background: i32) -> f64 {
+    with(|e| {
+        let Some(m) = e.model.as_mut() else {
+            return 0.0;
+        };
+        m.keep_outside(&e.input, color(background));
+        m.score
+    })
+}
+
+/// Sets the image renders show outside the kept region, at any size: w*h
+/// RGBA pixels followed by w*h mask bytes (255 inside the region) in the
+/// input buffer.
+#[unsafe(no_mangle)]
+pub extern "C" fn set_base(w: usize, h: usize) {
+    with(|e| {
+        let Some(m) = e.model.as_mut() else { return };
+        let n = w * h;
+        m.base = Some(Base {
+            w,
+            h,
+            pix: e.input[..n * 4].to_vec(),
+            mask: e.input[n * 4..n * 5].to_vec(),
+        });
     })
 }
 

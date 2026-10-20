@@ -9,7 +9,7 @@ use primitive_engine::constraints::{Constraints, Options};
 use primitive_engine::core::{self, Color};
 use primitive_engine::gif;
 use primitive_engine::model::{Model, State};
-use primitive_engine::render::Animator;
+use primitive_engine::render::{Animator, Base};
 use primitive_engine::shape::ShapeType;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -46,45 +46,34 @@ fn run(args: &Args) -> Result<(), String> {
     };
 
     log(1, &format!("reading {}", args.input));
-    let input = load_image(&args.input)?;
+    let original = load_image(&args.input)?;
     let input = if args.input_size > 0 {
-        thumbnail(input, args.input_size)
+        thumbnail(original.clone(), args.input_size)
     } else {
-        input.to_rgba8()
+        original.to_rgba8()
     };
     let (w, h) = (input.width() as usize, input.height() as usize);
     let pixels = input.into_raw();
 
-    let background = match &args.background {
+    let chosen_background = match &args.background {
         Some(hex) => {
-            parse_hex(hex).ok_or_else(|| format!("-bg must be a hex color, not {hex:?}"))?
-        }
-        None => core::average_color(&pixels),
-    };
-    let region = match &args.region {
-        Some(path) => {
-            let r = load_image(path).map_err(|e| format!("reading -region: {e}"))?;
-            let r = image::imageops::resize(
-                &r.to_luma_alpha8(),
-                w as u32,
-                h as u32,
-                FilterType::Triangle,
-            );
-            // transparent counts as black
-            Some(
-                r.pixels()
-                    .map(|p| (p[0] as u32 * p[1] as u32 / 255) as u8)
-                    .collect::<Vec<u8>>(),
-            )
+            Some(parse_hex(hex).ok_or_else(|| format!("-bg must be a hex color, not {hex:?}"))?)
         }
         None => None,
     };
+    let background = chosen_background.unwrap_or_else(|| core::average_color(&pixels));
+    let region_image = match &args.region {
+        Some(path) => Some(load_image(path).map_err(|e| format!("reading -region: {e}"))?),
+        None => None,
+    };
+    let region = region_image.as_ref().map(|r| mask(r, w, h));
     let options = Options {
         focus: args.focus,
         angle: args.angle,
         min_size: args.min_size,
         max_size: args.max_size,
-        region: region.as_deref(),
+        // with -keep, shapes are clipped to the region instead
+        region: region.as_deref().filter(|_| !args.keep),
     };
 
     // one model per worker, all holding the same shapes (see step)
@@ -100,9 +89,29 @@ fn run(args: &Args) -> Result<(), String> {
         .map(|k| {
             let mut m = Model::new(pixels.clone(), w, h, background, args.output_size, seed + k);
             m.set_constraints(Constraints::new(&options, w, h));
+            if let (true, Some(region)) = (args.keep, &region) {
+                m.keep_outside(region, chosen_background);
+            }
             m
         })
         .collect();
+    if let (true, Some(r)) = (args.keep, &region_image) {
+        // renders show the full-size input around the region, not the
+        // working-size copy
+        let (sw, sh) = (models[0].sw, models[0].sh);
+        let pix = image::imageops::resize(
+            &original.to_rgba8(),
+            sw as u32,
+            sh as u32,
+            FilterType::Triangle,
+        );
+        models[0].base = Some(Base {
+            w: sw,
+            h: sh,
+            pix: pix.into_raw(),
+            mask: mask(r, sw, sh),
+        });
+    }
     log(2, &format!("{workers} workers, working size {w}x{h}"));
     log(1, &format!("0: t=0.000, score={:.6}", models[0].score));
 
@@ -231,6 +240,20 @@ fn step(models: &mut [Model], t: ShapeType, alpha: i32, repeat: i32) {
             }
         }
     }
+}
+
+/// A region image as one byte per pixel of a w x h image: its brightness,
+/// with transparent counting as black.
+fn mask(region: &image::DynamicImage, w: usize, h: usize) -> Vec<u8> {
+    let r = image::imageops::resize(
+        &region.to_luma_alpha8(),
+        w as u32,
+        h as u32,
+        FilterType::Triangle,
+    );
+    r.pixels()
+        .map(|p| (p[0] as u32 * p[1] as u32 / 255) as u8)
+        .collect()
 }
 
 fn load_image(path: &str) -> Result<image::DynamicImage, String> {
