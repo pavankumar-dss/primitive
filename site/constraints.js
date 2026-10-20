@@ -3,7 +3,8 @@
 // Constraint controls: direction (toward a spot or along an angle), shape
 // size limits, and a painted region, set by clicking and painting on the
 // original image. app.js calls constraintsUI.attach() when an image loads
-// and constraintsUI.read() when a run starts.
+// and constraintsUI.read() when a run starts; settings() and apply() carry
+// the controls in and out of share links.
 const constraintsUI = (() => {
   const $ = (id) => document.getElementById(id);
   const el = {
@@ -93,7 +94,10 @@ const constraintsUI = (() => {
     el.mode.dispatchEvent(new Event('change', { bubbles: true })); // updates the shape picker and sync()
   });
   el.toolButtons.forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
-  el.focusReset.addEventListener('click', () => moveFocus({ x: 0.5, y: 0.5 }));
+  el.focusReset.addEventListener('click', () => {
+    moveFocus({ x: 0.5, y: 0.5 });
+    changed();
+  });
   el.clear.addEventListener('click', () => {
     if (!mask) return;
     mask.getContext('2d').clearRect(0, 0, mask.width, mask.height);
@@ -184,9 +188,16 @@ const constraintsUI = (() => {
   }
 
   function onUp() {
+    if (painting && tool === 'spot') changed();
     painting = false;
     lastPoint = null;
     draw(); // hides the guide rays
+  }
+
+  // Moving the spot is not a form control change, so announce it like one
+  // for app.js, which keeps the address bar's link up to date.
+  function changed() {
+    el.panel.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
   function moveFocus(p) {
@@ -312,6 +323,36 @@ const constraintsUI = (() => {
     return Object.keys(c).length ? c : null;
   }
 
+  // ------------------------------------------------------------ share links
+
+  // The constraints a share link can carry, in read()'s units. The painted
+  // region is too big for a link, so this only says whether one is on.
+  function settings() {
+    const c = { region: el.region.checked };
+    if (el.direction.value === 'focus') c.focus = [focus.x, focus.y];
+    if (el.direction.value === 'angle') c.angle = +el.angle.value;
+    if (+el.min.value > 0) c.minSize = +el.min.value / 100;
+    if (+el.max.value < 100) c.maxSize = +el.max.value / 100;
+    return c;
+  }
+
+  // Sets the controls from a link's values, skipping any that are missing
+  // or out of range.
+  function apply(c) {
+    const fits = (input, v) => Number.isInteger(v) && v >= +input.min && v <= +input.max;
+    if (c.focus && c.focus.length === 2 && c.focus.every((v) => v >= 0 && v <= 1)) {
+      el.direction.value = 'focus';
+      moveFocus({ x: c.focus[0], y: c.focus[1] });
+    } else if (Number.isFinite(c.angle)) {
+      el.direction.value = 'angle';
+      el.angle.value = ((Math.round(c.angle) % 180) + 180) % 180; // the same line either way round
+    }
+    const min = Math.round(c.minSize * 100), max = Math.round(c.maxSize * 100);
+    if (fits(el.max, max)) el.max.value = max;
+    if (fits(el.min, min) && min < +el.max.value) el.min.value = min;
+    sync();
+  }
+
   sync();
-  return { attach, read };
+  return { attach, read, settings, apply };
 })();
