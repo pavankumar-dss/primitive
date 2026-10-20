@@ -119,23 +119,7 @@ func (model *Model) Add(shape Shape, alpha int) {
 func (model *Model) Step(shapeType ShapeType, alpha, repeat int) int {
 	state := model.runWorkers(shapeType, alpha, 1000, 100, 16)
 	// state = HillClimb(state, 1000).(*State)
-	if !state.Worker.Allowed(state.Shape) {
-		// no shape satisfying the constraints was found this time
-		repeat = 0
-	} else {
-		model.Add(state.Shape, state.Alpha)
-	}
-
-	for i := 0; i < repeat; i++ {
-		state.Worker.Init(model.Current, model.Score)
-		a := state.Energy()
-		state = HillClimb(state, 100).(*State)
-		b := state.Energy()
-		if a == b || !state.Worker.Allowed(state.Shape) {
-			break
-		}
-		model.Add(state.Shape, state.Alpha)
-	}
+	model.Commit(state, repeat)
 
 	// for _, w := range model.Workers[1:] {
 	// 	model.Workers[0].Heatmap.AddHeatmap(w.Heatmap)
@@ -147,6 +131,42 @@ func (model *Model) Step(shapeType ShapeType, alpha, repeat int) int {
 		counter += worker.Counter
 	}
 	return counter
+}
+
+// Search runs m independent searches for a shape on the first worker and
+// returns the best one, without changing the model. Step does the same
+// with 16 searches spread over all the workers; the browser version, where
+// goroutines can't run in parallel, spreads them over several models in
+// separate Web Workers and commits the overall best.
+func (model *Model) Search(shapeType ShapeType, alpha, m int) *State {
+	worker := model.Workers[0]
+	worker.Init(model.Current, model.Score)
+	return worker.BestHillClimbState(shapeType, alpha, 1000, 100, m)
+}
+
+// Commit adds the shape in state, found by a search, followed by up to
+// repeat more shapes found by hill climbing from it. It returns the states
+// it added, which is none if the shape breaks the constraints.
+func (model *Model) Commit(state *State, repeat int) []*State {
+	if !state.Worker.Allowed(state.Shape) {
+		// no shape satisfying the constraints was found this time
+		return nil
+	}
+	model.Add(state.Shape, state.Alpha)
+	added := []*State{state}
+
+	for i := 0; i < repeat; i++ {
+		state.Worker.Init(model.Current, model.Score)
+		a := state.Energy()
+		state = HillClimb(state, 100).(*State)
+		b := state.Energy()
+		if a == b || !state.Worker.Allowed(state.Shape) {
+			break
+		}
+		model.Add(state.Shape, state.Alpha)
+		added = append(added, state)
+	}
+	return added
 }
 
 func (model *Model) runWorkers(t ShapeType, a, n, age, m int) *State {

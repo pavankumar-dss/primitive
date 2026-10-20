@@ -1,13 +1,80 @@
 // Runs the Go primitive model (compiled to WebAssembly) off the main thread.
+// This worker's model only follows along, for previews and exports: the
+// search for each shape is spread over a pool of search workers
+// (search-worker.js), each with its own copy of the model.
 importScripts('wasm_exec.js');
 
 const go = new Go();
-const ready = WebAssembly.instantiateStreaming(fetch('primitive.wasm'), go.importObject)
-  .then(({ instance }) => {
+const compiled = WebAssembly.compileStreaming(fetch('primitive.wasm'));
+let wasmModule = null;
+const ready = compiled
+  .then((module) => {
+    wasmModule = module;
+    return WebAssembly.instantiate(module, go.importObject);
+  })
+  .then((instance) => {
     go.run(instance);
-    postMessage({ type: 'ready' });
+    postMessage({ type: 'ready', maxThreads: canSpawn ? MAX_THREADS : 1 });
   })
   .catch((err) => postMessage({ type: 'error', message: 'Could not load the WebAssembly module: ' + err.message }));
+
+// ---------------------------------------------------------------- search pool
+
+const SEARCHES = 16;   // independent searches per shape, as in the Go CLI
+const MAX_THREADS = SEARCHES;
+// Older Safari can't start workers from a worker; then everything runs here.
+const canSpawn = typeof Worker === 'function';
+const pool = [];
+
+function spawn() {
+  const worker = new Worker('search-worker.js');
+  const pending = [];
+  worker.onmessage = ({ data }) => {
+    const p = pending.shift();
+    if (data.type === 'error') p.reject(new Error(data.message));
+    else p.resolve(data.value);
+  };
+  worker.onerror = (e) => {
+    e.preventDefault();
+    for (const p of pending.splice(0)) p.reject(new Error(e.message || 'A search worker crashed.'));
+  };
+  const call = (msg) => new Promise((resolve, reject) => {
+    pending.push({ resolve, reject });
+    worker.postMessage(msg);
+  });
+  // A message we don't wait for: a failure also fails the next call, since
+  // the searcher's Go program exits or never started.
+  const send = (msg) => { call(msg).catch(() => {}); };
+  send({ type: 'module', module: wasmModule });
+  return { call, send };
+}
+
+// Finds and adds the next shape. Searchers take the 16 searches one at a
+// time as they become free, so faster cores (or ones the OS favors) do more
+// of them; a fixed split would wait for the slowest. Returns the new score.
+async function step(id, searchers, mode, alpha, repeat) {
+  let left = SEARCHES;
+  const energies = await Promise.all(searchers.map(async (s) => {
+    let energy = Infinity;
+    for (let fresh = true; left > 0; fresh = false) {
+      left--;
+      energy = await s.call({ type: 'search', mode, alpha, fresh });
+    }
+    return energy;
+  }));
+  if (id !== runId) return null;
+  let best = 0;
+  energies.forEach((e, k) => { if (e < energies[best]) best = k; });
+  const shapes = await searchers[best].call({ type: 'commit', repeat });
+  if (id !== runId) return null;
+  if (!shapes.length) return primitiveApply([]);
+  searchers.forEach((s, k) => { if (k !== best) s.send({ type: 'apply', shapes }); });
+  return primitiveApply(shapes);
+}
+
+const seed = () => crypto.getRandomValues(new Uint32Array(1))[0];
+
+// ---------------------------------------------------------------- running
 
 // Bumped on every start/stop so a running loop notices it was superseded.
 let runId = 0;
@@ -23,23 +90,38 @@ const nextTick = () => new Promise((resolve) => {
 
 async function run(id, job) {
   if (typeof primitiveInit !== 'function') return; // load failed; already reported
-  const { pixels, width, height, mode, count, alpha, repeat, outputSize, background, constraints } = job;
+  const { width, height, mode, count, alpha, repeat, outputSize, background, constraints } = job;
+  const pixels = new Uint8Array(job.pixels);
   if (constraints && constraints.region) constraints.region = new Uint8Array(constraints.region);
-  primitiveInit(new Uint8Array(pixels), width, height, outputSize, background, constraints || null);
+  primitiveInit(pixels, width, height, outputSize, background, constraints || null, seed());
+
+  const threads = canSpawn ? Math.max(1, Math.min(MAX_THREADS, job.threads || 1)) : 1;
+  const searchers = [];
+  if (threads > 1) {
+    while (pool.length < threads) pool.push(spawn());
+    searchers.push(...pool.slice(0, threads));
+    for (const s of searchers) s.send({ type: 'init', pixels, width, height, background, constraints: constraints || null, seed: seed() });
+  }
+
   const start = performance.now();
   let lastPost = 0;
   let score = 0;
   for (let i = 1; i <= count; i++) {
     await nextTick();
     if (id !== runId) return;
-    score = primitiveStep(mode, alpha, repeat);
+    if (threads === 1) {
+      score = primitiveStep(mode, alpha, repeat);
+    } else {
+      score = await step(id, searchers, mode, alpha, repeat);
+      if (id !== runId) return;
+    }
     const now = performance.now();
     if (i === count || now - lastPost > 150 + primitiveShapes() / 10) {
       lastPost = now;
       postMessage({ type: 'progress', done: i, count, shapes: primitiveShapes(), score, elapsed: now - start, svg: primitiveSVG() });
     }
   }
-  postMessage({ type: 'done', score, shapes: primitiveShapes(), elapsed: performance.now() - start });
+  postMessage({ type: 'done', score, shapes: primitiveShapes(), elapsed: performance.now() - start, threads });
 }
 
 onmessage = async ({ data }) => {
@@ -54,6 +136,11 @@ onmessage = async ({ data }) => {
       }
       break;
     }
+    case 'prepare':
+      // start the search workers early so the first run doesn't wait for them
+      await ready;
+      if (canSpawn) while (pool.length < Math.min(MAX_THREADS, data.threads)) pool.push(spawn());
+      break;
     case 'stop':
       runId++;
       break;

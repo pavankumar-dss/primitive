@@ -5,7 +5,7 @@ const ui = {
   form: $('controls'), drop: $('drop'), file: $('file'), url: $('url'), loadUrl: $('load-url'),
   mode: $('mode'), count: $('count'), countCustom: $('count-custom'), countWarn: $('count-warn'),
   alpha: $('alpha'), alphaAuto: $('alpha-auto'),
-  inputSize: $('input-size'), outputSize: $('output-size'), repeat: $('repeat'),
+  inputSize: $('input-size'), outputSize: $('output-size'), repeat: $('repeat'), threads: $('threads'),
   bgAuto: $('bg-auto'), bg: $('bg'), start: $('start'), stop: $('stop'), status: $('status'),
   progress: $('progress'), progressBar: $('progress-bar'),
   original: $('original'), result: $('result'), resultCaption: $('result-caption'),
@@ -32,7 +32,7 @@ let lastSvg = null;
 let lastJob = null;
 let lastShapes = 0;      // shapes in the current result
 let exporting = null;    // format of the animation being made, if any
-let lastSpeed = null;    // {mode, inputSize, perSecond} measured on the last full run
+let lastSpeed = null;    // {mode, inputSize, threads, perSecond} measured on the last full run
 
 // ---------------------------------------------------------------- worker
 
@@ -41,6 +41,7 @@ worker.onmessage = ({ data }) => {
   switch (data.type) {
     case 'ready':
       engineReady = true;
+      setupThreads(data.maxThreads);
       setStatus(source ? 'Ready.' : 'Ready. Choose an image to start.');
       updateButtons();
       break;
@@ -60,7 +61,7 @@ worker.onmessage = ({ data }) => {
         ? ' Some steps found no shape that fits the constraints.' : '';
       finish(`Done: ${shapeLabel(data.shapes)} in ${fmtTime(data.elapsed)}.${short}`);
       if (data.elapsed > 2000) {
-        lastSpeed = { mode: lastJob.mode, inputSize: lastJob.inputSize, perSecond: lastJob.count / data.elapsed * 1000 };
+        lastSpeed = { mode: lastJob.mode, inputSize: lastJob.inputSize, threads: data.threads, perSecond: lastJob.count / data.elapsed * 1000 };
       }
       ui.resultCaption.textContent = shapeLabel(data.shapes);
       break;
@@ -253,6 +254,7 @@ function readJob() {
     repeat: +ui.repeat.value,
     inputSize: +ui.inputSize.value,
     outputSize: +ui.outputSize.value,
+    threads: readThreads(),
     background: ui.bgAuto.checked ? '' : ui.bg.value.slice(1),
   };
 }
@@ -365,12 +367,37 @@ function fmtTime(ms) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
 
+// ---------------------------------------------------------------- threads
+
+const THREAD_CHOICES = [1, 2, 4, 6, 8, 12, 16];
+let autoThreads = 1;
+
+function setupThreads(maxThreads) {
+  const cores = navigator.hardwareConcurrency || 4;
+  // leave a core for the page and everything else
+  autoThreads = Math.max(1, Math.min(maxThreads, cores - 1));
+  ui.threads.options[0].textContent = `Auto (${autoThreads})`;
+  for (const n of THREAD_CHOICES) {
+    if (n > Math.min(maxThreads, cores)) break;
+    ui.threads.add(new Option(n === 1 ? '1 (no parallel search)' : String(n), String(n)));
+  }
+  ui.threads.disabled = maxThreads === 1;
+  worker.postMessage({ type: 'prepare', threads: autoThreads });
+}
+
+function readThreads() {
+  return ui.threads.value === 'auto' ? autoThreads : +ui.threads.value;
+}
+
 // ---------------------------------------------------------------- shape count
 
 const MAX_SHAPES = 10000;
 const SLOW_SHAPES = 1000;
 // rough shapes per second at a 128 px working size, by shape mode
 const SPEED = { 0: 3, 1: 5, 2: 5, 3: 3, 4: 3, 5: 4, 6: 2, 7: 1.8, 8: 3 };
+// rough speedup over one thread, as measured on a 12-thread laptop CPU
+// (4 performance + 4 efficiency cores): 4 threads ~2.3x, 11 ~4x
+const speedup = (threads) => threads ** 0.6;
 
 function readCount() {
   const n = Math.round(+ui.countCustom.value);
@@ -381,9 +408,9 @@ function updateCountWarning() {
   const n = readCount();
   ui.countWarn.hidden = n <= SLOW_SHAPES;
   if (n <= SLOW_SHAPES) return;
-  const mode = +ui.mode.value, size = +ui.inputSize.value;
-  const perSecond = lastSpeed && lastSpeed.mode === mode && lastSpeed.inputSize === size
-    ? lastSpeed.perSecond : SPEED[mode] * 128 / size;
+  const mode = +ui.mode.value, size = +ui.inputSize.value, threads = readThreads();
+  const perSecond = lastSpeed && lastSpeed.mode === mode && lastSpeed.inputSize === size && lastSpeed.threads === threads
+    ? lastSpeed.perSecond : SPEED[mode] * 128 / size * speedup(threads);
   ui.countWarn.textContent = `More than ${SLOW_SHAPES} shapes takes a while: roughly ${fmtDuration(n / perSecond)}`
     + ' with these settings. You can stop at any point and keep the result.';
 }
@@ -409,6 +436,7 @@ ui.countCustom.addEventListener('change', () => {
 });
 ui.mode.addEventListener('change', updateCountWarning);
 ui.inputSize.addEventListener('change', updateCountWarning);
+ui.threads.addEventListener('change', updateCountWarning);
 
 for (const [input, out, unit = ''] of [['alpha', 'alpha-out'], ['repeat', 'repeat-out'], ['duration', 'duration-out', 's']]) {
   const sync = () => { $(out).textContent = $(input).value + unit; };

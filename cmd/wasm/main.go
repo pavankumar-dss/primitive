@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"image"
 	"image/png"
+	"math/rand"
 	"syscall/js"
 
 	"github.com/pavankumar-dss/primitive/primitive"
@@ -17,10 +18,12 @@ import (
 var model *primitive.Model
 
 // primitiveInit(rgba Uint8Array, width, height, outputSize, background,
-// constraints) creates a new model. background is a hex color, or "" for
-// the average color of the image. constraints is optional: {focus: [x, y],
-// angle, minSize, maxSize, region: Uint8Array of width*height bytes}, all
-// fields optional. Returns the starting score.
+// constraints, seed) creates a new model. background is a hex color, or ""
+// for the average color of the image. constraints is optional: {focus:
+// [x, y], angle, minSize, maxSize, region: Uint8Array of width*height
+// bytes}, all fields optional. seed, also optional, seeds the random search,
+// so that models in different Web Workers don't search the same way.
+// Returns the starting score.
 func initModel(this js.Value, args []js.Value) any {
 	w, h := args[1].Int(), args[2].Int()
 	im := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -36,6 +39,10 @@ func initModel(this js.Value, args []js.Value) any {
 	if len(args) > 5 && args[5].Type() == js.TypeObject {
 		model.SetConstraints(parseConstraints(args[5], w, h))
 	}
+	if len(args) > 6 && args[6].Type() == js.TypeNumber {
+		model.Workers[0].Rnd = rand.New(rand.NewSource(int64(args[6].Float())))
+	}
+	best = nil
 	return model.Score
 }
 
@@ -73,6 +80,57 @@ func shapes(this js.Value, args []js.Value) any {
 // shapes) and returns the new score.
 func step(this js.Value, args []js.Value) any {
 	model.Step(primitive.ShapeType(args[0].Int()), args[1].Int(), args[2].Int())
+	return model.Score
+}
+
+// The browser spreads each step over several models in separate Web
+// Workers: each runs primitiveSearch, the one that found the best shape
+// runs primitiveCommit, and the rest replay its shapes with primitiveApply.
+
+var best *primitive.State
+
+// primitiveSearch(mode, alpha, searches, fresh) looks for a shape without
+// adding it, keeping the best found since the last call with fresh set or
+// the last commit, and returns that shape's energy (lower is better).
+func search(this js.Value, args []js.Value) any {
+	s := model.Search(primitive.ShapeType(args[0].Int()), args[1].Int(), args[2].Int())
+	if best == nil || args[3].Truthy() || s.Energy() < best.Energy() {
+		best = s
+	}
+	return best.Energy()
+}
+
+// primitiveCommit(repeat) adds the shape found by the last search, plus up
+// to repeat more, and returns them as [[alpha, ...encoded shape], ...].
+func commit(this js.Value, args []js.Value) any {
+	var out []any
+	for _, s := range model.Commit(best, args[0].Int()) {
+		v := []any{s.Alpha}
+		for _, x := range primitive.EncodeShape(s.Shape) {
+			v = append(v, x)
+		}
+		out = append(out, v)
+	}
+	best = nil
+	return out
+}
+
+// primitiveApply(shapes) adds shapes returned by primitiveCommit in another
+// model and returns the new score.
+func apply(this js.Value, args []js.Value) any {
+	list := args[0]
+	for i := 0; i < list.Length(); i++ {
+		item := list.Index(i)
+		v := make([]float64, item.Length()-1)
+		for k := range v {
+			v[k] = item.Index(k + 1).Float()
+		}
+		shape, err := primitive.DecodeShape(model.Workers[0], v)
+		if err != nil {
+			panic(err)
+		}
+		model.Add(shape, item.Index(0).Int())
+	}
 	return model.Score
 }
 
@@ -152,6 +210,9 @@ func main() {
 	js.Global().Set("primitiveInit", js.FuncOf(initModel))
 	js.Global().Set("primitiveStep", js.FuncOf(step))
 	js.Global().Set("primitiveShapes", js.FuncOf(shapes))
+	js.Global().Set("primitiveSearch", js.FuncOf(search))
+	js.Global().Set("primitiveCommit", js.FuncOf(commit))
+	js.Global().Set("primitiveApply", js.FuncOf(apply))
 	js.Global().Set("primitiveSVG", js.FuncOf(svg))
 	js.Global().Set("primitivePNG", js.FuncOf(pngBytes))
 	js.Global().Set("primitiveAnimatedSVG", js.FuncOf(animatedSVG))
