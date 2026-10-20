@@ -14,9 +14,9 @@ https://pavankumar-dss.github.io/primitive/
 
 Upload an image (or paste a link to one, including Pinterest pins) and watch it being rebuilt shape by shape. Download the result as PNG or SVG, or as an animation of the shapes being added: GIF, MP4 video or animated SVG. Everything runs locally in your browser, spread over all your CPU cores, so uploaded images never leave your device.
 
-The site runs a Rust port of the algorithm ([`engine/`](engine)), compiled to WebAssembly, which is two to three times faster there than the Go code compiled the same way. The Go version is still built too: add `?engine=go` to the address to compare.
+The site runs a Rust port of the algorithm ([`engine/`](engine)), compiled to WebAssembly, which is two to three times faster there than the Go code compiled the same way.
 
-To run the site locally, with [Go](https://go.dev/doc/install) and [Rust](https://rustup.rs/) installed:
+To run the site locally, with [Rust](https://rustup.rs/) installed:
 
     rustup target add wasm32-unknown-unknown
     sh scripts/build-site.sh

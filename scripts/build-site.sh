@@ -8,9 +8,6 @@ cd "$(dirname "$0")/.."
 (cd engine && cargo build --release --target wasm32-unknown-unknown)
 cp engine/target/wasm32-unknown-unknown/release/primitive_engine.wasm site/engine.wasm
 
-# the original Go code, still selectable with ?engine=go for comparison
-GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o site/primitive.wasm ./cmd/wasm
-cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/
 mkdir -p site/examples
 cp examples/*.png site/examples/
 

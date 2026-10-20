@@ -1,7 +1,5 @@
-// Loads the engine that runs the primitive algorithm, inside a worker. The
-// default is the Rust port (engine/, built to engine.wasm); ?engine=go on
-// the page selects the original Go code (cmd/wasm, built to primitive.wasm),
-// kept for comparison. Both are wrapped in the same interface:
+// Loads the engine that runs the primitive algorithm, inside a worker: the
+// Rust port in engine/, built to engine.wasm, wrapped in this interface:
 //
 //   init(pixels, width, height, outputSize, background, constraints, seed)
 //                    → starting score; background is hex or '' for average
@@ -13,14 +11,9 @@
 //   gif(maxSide, frames, delay, lastDelay) → GIF bytes
 //   animStart(maxSide, frames) → {width, height}; animFrame(k) → RGBA bytes
 
-const ENGINE = new URLSearchParams(location.search).get('engine') === 'go' ? 'go' : 'rust';
-const ENGINE_FILE = ENGINE === 'go' ? 'primitive.wasm' : 'engine.wasm';
+const ENGINE_FILE = 'engine.wasm';
 
 async function loadEngine(module) {
-  return ENGINE === 'go' ? loadGo(module) : loadRust(module);
-}
-
-async function loadRust(module) {
   const x = (await WebAssembly.instantiate(module, {})).exports;
   const bytes = (ptr, len) => new Uint8Array(x.memory.buffer, ptr, len);
   const put = (data) => bytes(x.input_buffer(data.byteLength), data.byteLength).set(data);
@@ -70,24 +63,5 @@ async function loadRust(module) {
       const blob = await canvas.convertToBlob({ type: 'image/png' });
       return new Uint8Array(await blob.arrayBuffer());
     },
-  };
-}
-
-async function loadGo(module) {
-  importScripts('wasm_exec.js');
-  const go = new Go();
-  go.run(await WebAssembly.instantiate(module, go.importObject));
-  return {
-    init: primitiveInit,
-    search: primitiveSearch,
-    commit: primitiveCommit,
-    apply: primitiveApply,
-    shapes: primitiveShapes,
-    svg: primitiveSVG,
-    animatedSVG: primitiveAnimatedSVG,
-    gif: primitiveGIF,
-    animStart: primitiveAnimStart,
-    animFrame: primitiveAnimFrame,
-    png: async () => primitivePNG(),
   };
 }

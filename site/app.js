@@ -36,16 +36,13 @@ let lastSpeed = null;    // {mode, inputSize, threads, perSecond} measured on th
 
 // ---------------------------------------------------------------- worker
 
-// ?engine=go runs the original Go code instead of the Rust port, to compare
-const engineParam = new URLSearchParams(location.search).get('engine') === 'go' ? '?engine=go' : '';
-const worker = new Worker('worker.js' + engineParam);
+const worker = new Worker('worker.js');
 worker.onmessage = ({ data }) => {
   switch (data.type) {
     case 'ready':
       engineReady = true;
       setupThreads(data.maxThreads);
-      setStatus((source ? 'Ready.' : 'Ready. Choose an image to start.')
-        + (data.engine === 'go' ? ' (Using the original Go engine, for comparison.)' : ''));
+      setStatus(source ? 'Ready.' : 'Ready. Choose an image to start.');
       updateButtons();
       break;
     case 'progress':
@@ -347,7 +344,7 @@ function updateButtons() {
   ui.replay.disabled = noAnim;
 }
 
-// The Go SVG has a fixed width/height and no viewBox; add one so CSS can scale it.
+// The engine's SVG has a fixed width/height and no viewBox; add one so CSS can scale it.
 function fitSvg(svg) {
   if (svg) svg.setAttribute('viewBox', `0 0 ${svg.getAttribute('width')} ${svg.getAttribute('height')}`);
 }

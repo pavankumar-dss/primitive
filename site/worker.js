@@ -13,7 +13,7 @@ const ready = WebAssembly.compileStreaming(fetch(ENGINE_FILE))
   })
   .then((e) => {
     engine = e;
-    postMessage({ type: 'ready', maxThreads: MAX_THREADS, engine: ENGINE });
+    postMessage({ type: 'ready', maxThreads: MAX_THREADS });
   })
   .catch((err) => postMessage({ type: 'error', message: 'Could not load the WebAssembly module: ' + err.message }));
 
@@ -27,7 +27,7 @@ function spawn() {
   if (typeof Worker !== 'function') {
     throw new Error('This browser cannot start workers from a worker. Try a recent Chrome, Edge, Firefox or Safari.');
   }
-  const worker = new Worker('search-worker.js' + location.search);
+  const worker = new Worker('search-worker.js');
   const pending = [];
   worker.onmessage = ({ data }) => {
     const p = pending.shift();
@@ -43,7 +43,7 @@ function spawn() {
     worker.postMessage(msg);
   });
   // A message we don't wait for: a failure also fails the next call, since
-  // the searcher's Go program exits or never started.
+  // the searcher's engine is then broken or never loaded.
   const send = (msg) => { call(msg).catch(() => {}); };
   send({ type: 'module', module: wasmModule });
   return { call, send };
