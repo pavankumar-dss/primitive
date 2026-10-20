@@ -114,7 +114,14 @@
       </label>
       <label class="check"><input type="checkbox" id="c-region"> Only paint inside a region</label>
       <div class="region-tools" id="c-region-tools" hidden>
-        <p class="hint">Paint over the original image where shapes may go; the rest stays background.</p>
+        <p class="hint">Paint over the original image where shapes may go.</p>
+        <label class="field">
+          <span>Around the region</span>
+          <select id="c-outside">
+            <option value="background">Background color</option>
+            <option value="original">The original image</option>
+          </select>
+        </label>
         <label class="field">
           <span>Brush size</span>
           <input type="range" id="c-brush" min="2" max="25" value="8">

@@ -3,8 +3,9 @@
 //! optimize.go in the original Go package.
 
 use crate::constraints::Constraints;
-use crate::core::{self, Color, Scanline};
+use crate::core::{self, Clip, Color, Scanline};
 use crate::raster::Rasterizer;
+use crate::render::Base;
 use crate::rng::Rng;
 use crate::shape::{Env, Shape, ShapeType};
 use std::fmt::Write;
@@ -23,6 +24,7 @@ pub struct State {
 struct Worker {
     buffer: Vec<u8>,
     lines: Vec<Scanline>,
+    scratch: Vec<Scanline>,
     raster: Rasterizer,
     rnd: Rng,
 }
@@ -44,6 +46,10 @@ pub struct Model {
     pub shapes: Vec<Shape>,
     pub colors: Vec<Color>,
     constraints: Option<Constraints>,
+    /// the region shapes are clipped to, when the image outside it is kept
+    clip: Option<Clip>,
+    /// what renders show outside that region (see keep_outside)
+    pub base: Option<Base>,
     worker: Worker,
 }
 
@@ -96,9 +102,12 @@ impl Model {
             shapes: vec![],
             colors: vec![],
             constraints: None,
+            clip: None,
+            base: None,
             worker: Worker {
                 buffer: vec![0; w * h * 4],
                 lines: Vec::with_capacity(4096),
+                scratch: Vec::with_capacity(4096),
                 raster: Rasterizer::default(),
                 rnd: Rng::new(seed),
             },
@@ -107,6 +116,64 @@ impl Model {
 
     pub fn set_constraints(&mut self, c: Option<Constraints>) {
         self.constraints = c;
+    }
+
+    /// Keeps the target image outside a region and puts shapes only inside
+    /// it: the picture starts as the target outside and as background
+    /// inside (the average color there if None), and shapes are clipped to
+    /// the region. mask is one byte per working pixel, 128 and up inside.
+    /// Renders show the target outside, scaled up, unless base is replaced
+    /// with a sharper image.
+    pub fn keep_outside(&mut self, mask: &[u8], background: Option<Color>) {
+        let n = self.w * self.h;
+        let inside = |i: usize| mask[i] >= 128;
+        let bg = background.unwrap_or_else(|| {
+            let (mut sum, mut count) = ([0usize; 3], 0);
+            for i in (0..n).filter(|&i| inside(i)) {
+                for (s, &v) in sum.iter_mut().zip(&self.target[i * 4..i * 4 + 3]) {
+                    *s += v as usize;
+                }
+                count += 1;
+            }
+            match count {
+                0 => self.background,
+                _ => Color {
+                    r: (sum[0] / count) as i32,
+                    g: (sum[1] / count) as i32,
+                    b: (sum[2] / count) as i32,
+                    a: 255,
+                },
+            }
+        });
+        for i in 0..n {
+            let p = &mut self.current[i * 4..i * 4 + 4];
+            if inside(i) {
+                p.copy_from_slice(&[bg.r as u8, bg.g as u8, bg.b as u8, 255]);
+            } else {
+                p.copy_from_slice(&self.target[i * 4..i * 4 + 4]);
+            }
+        }
+        self.background = bg;
+        self.score = core::difference_full(&self.target, &self.current);
+        self.clip = Some(Clip::new(mask, self.w, self.h));
+        self.base = Some(Base {
+            w: self.w,
+            h: self.h,
+            pix: self.target.clone(),
+            mask: mask[..n]
+                .iter()
+                .map(|&m| if m >= 128 { 255 } else { 0 })
+                .collect(),
+        });
+    }
+
+    /// The pixels shape covers, into the worker's lines.
+    fn rasterize(&mut self, shape: &Shape) {
+        let wk = &mut self.worker;
+        shape.rasterize(self.w as i32, self.h as i32, &mut wk.raster, &mut wk.lines);
+        if let Some(clip) = &self.clip {
+            clip.apply(&mut wk.lines, &mut wk.scratch);
+        }
     }
 
     fn env(&mut self) -> Env<'_> {
@@ -123,11 +190,9 @@ impl Model {
             return e;
         }
         self.evaluations += 1;
+        self.rasterize(&state.shape);
         let (w, h) = (self.w, self.h);
         let wk = &mut self.worker;
-        state
-            .shape
-            .rasterize(w as i32, h as i32, &mut wk.raster, &mut wk.lines);
         let lines = &wk.lines;
         let color = core::compute_color(&self.target, &self.current, w, lines, state.alpha);
         core::copy_lines(&mut wk.buffer, &self.current, w, lines);
@@ -225,12 +290,12 @@ impl Model {
     }
 
     fn allowed(&mut self, shape: &Shape) -> bool {
-        let Some(c) = &self.constraints else {
+        if self.constraints.is_none() {
             return true;
-        };
-        let wk = &mut self.worker;
-        shape.rasterize(self.w as i32, self.h as i32, &mut wk.raster, &mut wk.lines);
-        c.violation(&wk.lines, self.w) == 0.0
+        }
+        self.rasterize(shape);
+        let c = self.constraints.as_ref().unwrap();
+        c.violation(&self.worker.lines, self.w) == 0.0
     }
 
     /// Adds the shape in state, found by a search, followed by up to repeat
@@ -258,9 +323,9 @@ impl Model {
     }
 
     pub fn add(&mut self, shape: Shape, alpha: i32) {
+        self.rasterize(&shape);
         let (w, h) = (self.w, self.h);
         let wk = &mut self.worker;
-        shape.rasterize(w as i32, h as i32, &mut wk.raster, &mut wk.lines);
         let lines = &wk.lines;
         let color = core::compute_color(&self.target, &self.current, w, lines, alpha);
         // the buffer keeps the pixels from before the shape for scoring
@@ -440,6 +505,96 @@ mod tests {
         let full = core::difference_full(&m.target, &m.current);
         // as in Go, the running total is truncated each step, so it drifts a little
         assert!((m.score - full).abs() < 1e-6, "{} vs {}", m.score, full);
+    }
+
+    /// A disc in the middle of the test model's image.
+    fn disc(m: &Model) -> Vec<u8> {
+        (0..m.w * m.h)
+            .map(|i| {
+                let (x, y) = ((i % m.w) as f64 - 32.0, (i / m.w) as f64 - 24.0);
+                if x * x + y * y < 15.0 * 15.0 { 255 } else { 0 }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn keep_outside() {
+        let mut m = test_model(5);
+        let mask = disc(&m);
+        let before = m.score;
+        m.keep_outside(&mask, None);
+        assert!(
+            m.score < before,
+            "keeping the image outside starts closer to it"
+        );
+        // the background is now the disc's average color
+        let inside: Vec<usize> = (0..m.w * m.h).filter(|&i| mask[i] == 255).collect();
+        let red = inside
+            .iter()
+            .map(|&i| m.target[i * 4] as usize)
+            .sum::<usize>()
+            / inside.len();
+        assert_eq!(m.background.r, red as i32);
+        let start = m.score;
+        for t in [
+            ShapeType::Triangle,
+            ShapeType::RotatedEllipse,
+            ShapeType::Quadratic,
+        ] {
+            for _ in 0..4 {
+                let s = m.search(t, 128, 2);
+                m.commit(s, 0);
+            }
+        }
+        assert!(m.score < start);
+        for i in (0..m.w * m.h).filter(|&i| mask[i] == 0) {
+            assert_eq!(
+                m.current[i * 4..i * 4 + 4],
+                m.target[i * 4..i * 4 + 4],
+                "pixel {i} outside changed"
+            );
+        }
+        assert!((m.score - core::difference_full(&m.target, &m.current)).abs() < 1e-6);
+
+        // a follower that keeps the same region replays to the same picture
+        let mut follower = test_model(6);
+        follower.keep_outside(&mask, None);
+        for (s, c) in m.shapes.iter().zip(&m.colors) {
+            follower.add(*s, c.a);
+        }
+        assert!(follower.current == m.current);
+    }
+
+    #[test]
+    fn renders_show_the_base_outside() {
+        let mut m = test_model(7);
+        let mask = disc(&m);
+        m.keep_outside(&mask, None);
+        for _ in 0..6 {
+            let s = m.search(ShapeType::Rectangle, 255, 2);
+            m.commit(s, 0);
+        }
+        // a sharper base at twice the size: flat green outside the disc
+        let (bw, bh) = (m.w * 2, m.h * 2);
+        let base_mask: Vec<u8> = (0..bw * bh)
+            .map(|i| mask[(i / bw / 2) * m.w + (i % bw) / 2])
+            .collect();
+        m.base = Some(Base {
+            w: bw,
+            h: bh,
+            pix: [0, 200, 0, 255].repeat(bw * bh),
+            mask: base_mask,
+        });
+        let mut a = crate::render::Animator::new(&m, 128, false);
+        let (w, h) = (a.width, a.height);
+        let pix = a.frame(&m, m.shapes.len()).to_vec();
+        // corners are far outside the disc: pure base
+        for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+            assert_eq!(pix[(y * w + x) * 4..][..4], [0, 200, 0, 255]);
+        }
+        // the center is inside: not the base
+        let c = (h / 2 * w + w / 2) * 4;
+        assert_ne!(pix[c..c + 3], [0, 200, 0]);
     }
 
     #[test]

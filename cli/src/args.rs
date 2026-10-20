@@ -26,6 +26,8 @@ Usage: primitive [OPTIONS] -i input -o output -n count
   -minsize f    smallest shape, as a fraction of the image's longest side
   -maxsize f    largest shape, as a fraction of the image's longest side
   -region path  image whose white areas are the only places shapes may go
+  -keep         with -region, keep the input image outside the region
+                (shapes are clipped to it) instead of the background color
   -v, -vv       verbose, very verbose";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,6 +53,7 @@ pub struct Args {
     pub min_size: f64,
     pub max_size: f64,
     pub region: Option<String>,
+    pub keep: bool,
     pub verbose: u8,
 }
 
@@ -83,6 +86,7 @@ pub fn parse(argv: impl IntoIterator<Item = String>) -> Result<Option<Args>, Str
         min_size: 0.0,
         max_size: 0.0,
         region: None,
+        keep: false,
         verbose: 0,
     };
     while let Some(arg) = argv.next() {
@@ -96,6 +100,7 @@ pub fn parse(argv: impl IntoIterator<Item = String>) -> Result<Option<Args>, Str
         match name {
             "h" | "help" => return Ok(None),
             "v" => a.verbose = a.verbose.max(1),
+            "keep" => a.keep = true,
             "vv" => a.verbose = 2,
             _ => {
                 let value = match inline.or_else(|| argv.next()) {
@@ -178,6 +183,9 @@ pub fn parse(argv: impl IntoIterator<Item = String>) -> Result<Option<Args>, Str
     if a.min_size < 0.0 || a.max_size < 0.0 || (a.max_size > 0.0 && a.min_size > a.max_size) {
         errors.push("-minsize and -maxsize must be positive, with minsize <= maxsize".into());
     }
+    if a.keep && a.region.is_none() {
+        errors.push("-keep needs -region".into());
+    }
     if !errors.is_empty() {
         return Err(errors.join("\nERROR: "));
     }
@@ -257,6 +265,11 @@ mod tests {
             run("-i a -o b -n 5 extra")
                 .unwrap_err()
                 .contains("unexpected")
+        );
+        assert!(
+            run("-i a -o b -n 5 -keep")
+                .unwrap_err()
+                .contains("-keep needs -region")
         );
         assert_eq!(run("-h").unwrap_err(), "help");
     }

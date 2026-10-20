@@ -4,6 +4,9 @@
 //   init(pixels, width, height, outputSize, background, constraints, seed)
 //                    → starting score; background is hex or '' for average
 //   search(mode, alpha, searches, fresh) → energy of the best shape so far
+//                    constraints.keep keeps the image outside constraints.region
+//   setBase(pixels, mask, width, height) → what renders show around a kept
+//                    region: RGBA pixels and a mask byte per pixel, any size
 //   commit(repeat)   → the shapes added (opaque, with a length), for apply
 //   apply(shapes)    → new score
 //   shapes(), svg(count), animatedSVG(duration, count)
@@ -29,11 +32,24 @@ async function loadEngine(module) {
       const score = x.init(width, height, outputSize, background ? parseInt(background, 16) : -1, seed);
       if (constraints) {
         const c = constraints;
-        if (c.region) put(c.region);
-        const flags = (c.focus ? 1 : 0) | (typeof c.angle === 'number' ? 2 : 0) | (c.region ? 4 : 0);
+        // a kept region clips shapes instead of penalizing those outside it
+        const region = c.region && !c.keep;
+        if (region) put(c.region);
+        const flags = (c.focus ? 1 : 0) | (typeof c.angle === 'number' ? 2 : 0) | (region ? 4 : 0);
         x.set_constraints(flags, c.focus ? c.focus[0] : 0, c.focus ? c.focus[1] : 0, c.angle || 0, c.minSize || 0, c.maxSize || 0);
+        if (c.keep && c.region) {
+          put(c.region);
+          return x.keep_outside(background ? parseInt(background, 16) : -1);
+        }
       }
       return score;
+    },
+    setBase(pixels, mask, width, height) {
+      const data = new Uint8Array(pixels.length + mask.length);
+      data.set(pixels);
+      data.set(mask, pixels.length);
+      put(data);
+      x.set_base(width, height);
     },
     search: (mode, alpha, searches, fresh) => x.search(mode, alpha, searches, fresh ? 1 : 0),
     commit(repeat) {

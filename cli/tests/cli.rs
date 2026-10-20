@@ -154,6 +154,56 @@ fn constraints_and_stdout() {
 }
 
 #[test]
+fn keeps_the_image_outside_the_region() {
+    let dir = TempDir::new("keep");
+    let input = write_input(&dir);
+    // convert only the disc; the gradient around it stays
+    let region = image::GrayImage::from_fn(300, 200, |x, y| {
+        let (dx, dy) = (x as f64 - 150.0, y as f64 - 100.0);
+        image::Luma([if dx * dx + dy * dy < 60.0 * 60.0 {
+            255
+        } else {
+            0
+        }])
+    });
+    region.save(dir.path("region.png")).unwrap();
+    let out = primitive()
+        .args([
+            "-i",
+            &input,
+            "-o",
+            &dir.path("out.png"),
+            "-n",
+            "10",
+            "-r",
+            "100",
+            "-s",
+            "300",
+        ])
+        .args(["-region", &dir.path("region.png"), "-keep"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let png = image::open(dir.path("out.png")).unwrap().to_rgb8();
+    let original = image::open(&input).unwrap().to_rgb8();
+    // the shape of the 100 x 67 working image
+    assert_eq!(png.dimensions(), (300, 201));
+    // far from the disc, the output is the input
+    for (x, y) in [(5, 5), (290, 10), (20, 190), (280, 180)] {
+        let (a, b) = (png.get_pixel(x, y), original.get_pixel(x, y));
+        let diff = (0..3)
+            .map(|c| (a[c] as i32 - b[c] as i32).abs())
+            .max()
+            .unwrap();
+        assert!(diff <= 3, "({x}, {y}): {a:?} vs {b:?}");
+    }
+}
+
+#[test]
 fn reports_bad_arguments() {
     let out = primitive()
         .args(["-i", "x.png", "-n", "5"])

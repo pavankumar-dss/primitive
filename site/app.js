@@ -31,6 +31,7 @@ let sourceOrigin = null; // {url} or {sample} when the image can go in a share l
 let engineReady = false;
 let running = false;
 let lastSvg = null;
+let kept = null;         // the original image and region mask around a kept region (see keepLayers)
 let lastJob = null;
 let lastShapes = 0;      // shapes in the current result
 let resultLabel = 'Primitive'; // the result's caption when it shows every shape
@@ -73,13 +74,17 @@ worker.onmessage = ({ data }) => {
       if (data.bytes) download(new Blob([data.bytes], { type: 'image/png' }), '.png');
       break;
     case 'svg':
-      download(new Blob([data.data], { type: 'image/svg+xml' }), '.svg');
+      downloadSvg(data.data, '.svg');
       break;
     case 'export':
       exporting = null;
       if (data.purpose === 'replay') {
         showResult(data.data);
         setExportStatus('');
+      } else if (data.format === 'svg') {
+        downloadSvg(data.data, EXPORTS.svg.suffix).then((blob) => {
+          setExportStatus(`Saved ${EXPORTS.svg.label} (${fmtBytes(blob.size)}).`);
+        });
       } else {
         const blob = new Blob([data.data], { type: EXPORTS[data.format].type });
         download(blob, EXPORTS[data.format].suffix);
@@ -291,6 +296,9 @@ ui.form.addEventListener('submit', (e) => {
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, 0, 0, width, height);
   const pixels = ctx.getImageData(0, 0, width, height).data.buffer;
+  const transfer = [pixels];
+  if (job.constraints && job.constraints.region) transfer.push(job.constraints.region);
+  keepLayers(job.constraints && job.constraints.keep ? job : null, width, height, transfer);
   lastJob = job;
   lastShapes = 0;
   running = true;
@@ -300,8 +308,6 @@ ui.form.addEventListener('submit', (e) => {
   setStatus('Starting…');
   setExportStatus('');
   updateButtons();
-  const transfer = [pixels];
-  if (job.constraints && job.constraints.region) transfer.push(job.constraints.region);
   worker.postMessage({ type: 'start', pixels, width, height, ...job }, transfer);
   if (matchMedia('(max-width: 860px)').matches) ui.result.scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
@@ -331,9 +337,76 @@ function download(blob, suffix) {
 ui.dlSvg.addEventListener('click', () => {
   if (!lastSvg) return;
   const count = exportCount();
-  if (count === null) download(new Blob([lastSvg], { type: 'image/svg+xml' }), '.svg');
+  if (count === null) downloadSvg(lastSvg, '.svg');
   else worker.postMessage({ type: 'svg', count });
 });
+
+// ---------------------------------------------------------------- a kept region
+
+// With "Around the region: the original image", renders and SVGs show the
+// original image around the region. The job carries the original and the
+// region's mask at the output size for the engine's renders, and SVGs get
+// both as images, the shapes masked to the region: in the preview as blob
+// URLs (cheap to repeat every update), in downloads as data URLs, so the
+// file stands alone.
+function keepLayers(job, width, height, transfer) {
+  if (kept) kept.urls.then((u) => Object.values(u).forEach(URL.revokeObjectURL));
+  kept = null;
+  if (!job) return;
+  // the output size, as the engine works it out from the working size
+  const size = job.outputSize, aspect = width / height;
+  const w = aspect >= 1 ? size : Math.floor(size * aspect);
+  const h = aspect >= 1 ? Math.floor(size / aspect) : size;
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, w, h);
+  const pixels = ctx.getImageData(0, 0, w, h).data.buffer;
+  const mask = constraintsUI.regionMask(w, h);
+  job.base = { width: w, height: h, pixels, mask };
+  transfer.push(pixels, mask.buffer);
+  const blobs = Promise.all([canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 }), constraintsUI.regionPNG()]);
+  const urls = blobs.then(([image, region]) => ({ image: URL.createObjectURL(image), region: URL.createObjectURL(region) }));
+  kept = { blobs, urls, ready: null };
+  const current = kept;
+  urls.then((u) => {
+    current.ready = u;
+    // redraw a preview that arrived before the images were ready
+    if (kept === current && lastSvg) showResult(lastSvg);
+  });
+}
+
+// The SVG with the original image under it and its shapes masked to the
+// region, given URLs for both images.
+function withKept(svg, { image, region }) {
+  const w = /width="(\d+)"/.exec(svg)[1], h = /height="(\d+)"/.exec(svg)[1];
+  const open = svg.indexOf('>') + 1, close = svg.lastIndexOf('</svg>');
+  const size = `x="0" y="0" width="${w}" height="${h}"`;
+  return svg.slice(0, open).replace('<svg ', '<svg xmlns:xlink="http://www.w3.org/1999/xlink" ')
+    + `\n<defs><mask id="region" maskUnits="userSpaceOnUse" ${size}>`
+    + `<image ${size} preserveAspectRatio="none" xlink:href="${region}" /></mask></defs>`
+    + `\n<image ${size} preserveAspectRatio="none" xlink:href="${image}" />`
+    + '\n<g mask="url(#region)">' + svg.slice(open, close) + '</g>\n' + svg.slice(close);
+}
+
+const dataURL = (blob) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(r.result);
+  r.onerror = () => reject(r.error);
+  r.readAsDataURL(blob);
+});
+
+// Downloads an SVG, with the original image in it around a kept region.
+// Returns the blob saved.
+async function downloadSvg(svg, suffix) {
+  if (kept) {
+    const [image, region] = await Promise.all((await kept.blobs).map(dataURL));
+    svg = withKept(svg, { image, region });
+  }
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  download(blob, suffix);
+  return blob;
+}
 
 function requestExport(format, purpose) {
   if (!lastSvg || running || exporting) return;
@@ -379,9 +452,9 @@ function showScrubbed() {
 }
 
 function showResult(svgText) {
-  ui.result.innerHTML = svgText;
+  ui.result.innerHTML = kept && kept.ready ? withKept(svgText, kept.ready) : svgText;
   fitSvg(ui.result.querySelector('svg'));
-  const group = ui.result.querySelector('svg > g');
+  const group = shapeGroup();
   visible = group ? group.children.length : 0;
   if (!ui.scrub.hidden) showShapes(+ui.scrub.value);
 }
@@ -392,12 +465,18 @@ function showResult(svgText) {
 // with thousands of shapes. (visibility, unlike display, doesn't restart a
 // replay's fade-in when a shape comes back.)
 function showShapes(k) {
-  const group = ui.result.querySelector('svg > g');
+  const group = shapeGroup();
   if (!group) return;
   const shapes = group.children;
   const end = Math.min(shapes.length, Math.max(k, visible));
   for (let i = Math.min(k, visible); i < end; i++) shapes[i].style.visibility = i < k ? '' : 'hidden';
   visible = k;
+}
+
+// The engine's group of shapes in the result SVG: the one scaled to the
+// output size (a kept region wraps it in another group).
+function shapeGroup() {
+  return ui.result.querySelector('svg g[transform]');
 }
 
 // one update per frame, however fast the input events come

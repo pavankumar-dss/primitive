@@ -15,7 +15,7 @@ const constraintsUI = (() => {
     warn: $('c-direction-warn'), switchMode: $('c-switch'), mode: $('mode'),
     min: $('c-min'), minOut: $('c-min-out'), max: $('c-max'), maxOut: $('c-max-out'),
     region: $('c-region'), regionTools: $('c-region-tools'), brush: $('c-brush'),
-    clear: $('c-clear'), invert: $('c-invert'),
+    clear: $('c-clear'), invert: $('c-invert'), outside: $('c-outside'),
     tools: $('tools'), toolButtons: [...document.querySelectorAll('[data-tool]')],
   };
   const ORIENTED_MODES = ['0', '5', '6', '7']; // combo, rotated rect, Bézier, rotated ellipse
@@ -319,6 +319,8 @@ const constraintsUI = (() => {
       }
       if (!painted) throw new Error('Paint the area where shapes may go on the original image, or turn off “Only paint inside a region”.');
       c.region = region.buffer;
+      // shapes are clipped to the region, and the image around it stays
+      if (el.outside.value === 'original') c.keep = true;
     }
     return Object.keys(c).length ? c : null;
   }
@@ -354,5 +356,29 @@ const constraintsUI = (() => {
   }
 
   sync();
-  return { attach, read, settings, apply };
+  // The painted region at width x height, smoothly scaled: a byte per
+  // pixel, 255 inside. For drawing the original image around it.
+  function regionMask(width, height) {
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(mask, 0, 0, width, height);
+    const rgba = ctx.getImageData(0, 0, width, height).data;
+    const out = new Uint8Array(width * height);
+    for (let i = 0; i < out.length; i++) out[i] = rgba[i * 4 + 3];
+    return out;
+  }
+
+  // The painted region as a PNG, white inside and black outside, for an SVG
+  // mask.
+  function regionPNG() {
+    const canvas = new OffscreenCanvas(mask.width, mask.height);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, mask.width, mask.height);
+    ctx.drawImage(mask, 0, 0);
+    return canvas.convertToBlob({ type: 'image/png' });
+  }
+
+  return { attach, read, settings, apply, regionMask, regionPNG };
 })();
